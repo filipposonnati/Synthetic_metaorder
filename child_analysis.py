@@ -188,8 +188,6 @@ plt.yscale('log')
 plt.xlabel(r'$Q/V_D$')
 plt.ylabel(r'$I$')
 
-plt.title(f'$I = {Y:.4f} (Q/V_D)^{{{delta:.2f}}} \cdot N^{{{mu:.2f}}}$', pad=20)
-
 # Legenda posizionata fuori o in un angolo pulito
 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True)
 
@@ -198,6 +196,70 @@ plt.tight_layout()
 
 # Salvataggio in alta risoluzione
 plt.savefig('images\\square_root_verify.png', dpi=300, bbox_inches='tight')
+#plt.show()
+
+
+
+
+
+
+
+
+
+
+
+plt.figure(figsize=(12, 8))
+
+# Utilizziamo gli stessi NbChild identificati nella prima parte
+unique_nb = sorted(df_res['NbChild'].unique())
+colors = plt.get_cmap('tab20', len(unique_nb))
+
+for i, nb_val in enumerate(unique_nb):
+    subset = df_res[df_res['NbChild'] == nb_val]
+    
+    # Filtro minimo per avere una distribuzione significativa
+    if len(subset) > 100:
+        # Calcolo della distribuzione (PDF) usando numpy
+        # Usiamo bin logaritmici per una migliore visualizzazione in log-log
+        counts, bin_edges = np.histogram(
+            subset['MetaVolume'], 
+            bins=np.logspace(np.log10(subset['MetaVolume'].min()), np.log10(subset['MetaVolume'].max()), 25), 
+            density=False
+        )
+        
+        # Calcolo del centro dei bin per il plotting
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Plot della distribuzione
+        plt.plot(
+            bin_centers, 
+            counts, 
+            marker='', 
+            linestyle='-', 
+            linewidth=1.5, 
+            markersize=1,
+            label=f'N={nb_val}',
+            color=colors(i),
+            alpha=0.8
+        )
+
+# Raffinatezze estetiche coerenti con il primo grafico
+plt.xscale('log')
+plt.yscale('log')
+
+plt.xlabel(r'$Q$')
+plt.ylabel(r'Frequency')
+
+plt.ylim((1, 1e6))
+
+# Legenda ordinata
+plt.legend(bbox_to_anchor=(1.0, 1), loc='upper left', frameon=True, fontsize=10)
+
+plt.grid(True, which="both", ls="-", alpha=0.2)
+plt.tight_layout()
+
+# Salvataggio
+plt.savefig('images\\volume_distribution_per_child.png', dpi=300, bbox_inches='tight')
 #plt.show()
 
 
