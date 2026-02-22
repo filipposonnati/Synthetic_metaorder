@@ -9,6 +9,9 @@ import re
 def post_impact(x, a, beta):
     return a * (x**(1 - beta) - (x - 1)**(1 - beta))
 
+def der_post_impact(x, a, beta):
+    return a * (1 - beta) * (x**(-beta) - (x - 1)**(-beta))
+
 plt.rcParams.update({
     'font.size': 12,          # Dimensione base per tutto il testo
     'axes.titlesize': 20,     # Titolo
@@ -75,16 +78,21 @@ def save(index_time):
 
             post_trades.to_csv(f'database\\post_trades\\20_power_2.0_{index_time}.csv', mode='a', index=False, header=not file_exists)
 
-for index_time in range(4):
+length = 2
+
+for index_time in range(length):
     if not os.path.exists(f'database\\post_trades\\20_power_2.0_{index_time}.csv'):
         save(index_time)
 
 bins_analysis = np.array([])
 times_analysis = np.array([])
 
+bins_analysis_err = np.array([])
+times_analysis_err = np.array([])
+
 paths = np.array(listdir('database\\post_trades'))
 
-for path in paths:
+for path in paths[:length]:
     print(path)
     post_trades = pd.read_csv(
         f'database\\post_trades\\{path}', 
@@ -112,6 +120,12 @@ for path in paths:
     bins_analysis = np.concatenate((bins_analysis, y))
     times_analysis = np.concatenate((times_analysis, x))
 
+    x_err = grouped['NormalizedTime_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
+    y_err = grouped['Ratio_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
+
+    bins_analysis_err = np.concatenate((bins_analysis_err, y_err))
+    times_analysis_err = np.concatenate((times_analysis_err, x_err))
+
 mask = times_analysis > 1.0
 
 popt, pcov = curve_fit(post_impact, times_analysis[mask], bins_analysis[mask])
@@ -122,10 +136,32 @@ beta = popt[1]
 Y_err = np.sqrt(pcov[0][0])
 beta_err = np.sqrt(pcov[1][1])
 
-print(f'Y = {Y} +- {Y_err}')
-print(f'beta = {beta} +- {beta_err}')
+print(f'Fit (no err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
 
-x_theoretical = np.linspace(1.0, 4.0, 100)
+popt, pcov = curve_fit(post_impact, times_analysis[mask], bins_analysis[mask], sigma=bins_analysis_err[mask], absolute_sigma=True)
+
+Y = popt[0]
+beta = popt[1]
+
+Y_err = np.sqrt(pcov[0][0])
+beta_err = np.sqrt(pcov[1][1])
+
+print(f'Fit (y err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
+
+for i in range(10):
+    err = np.sqrt(bins_analysis_err**2 + (times_analysis_err * der_post_impact(times_analysis, Y, beta))**2)
+
+    popt, pcov = curve_fit(post_impact, times_analysis[mask], bins_analysis[mask], sigma=err[mask], absolute_sigma=True)
+
+    Y = popt[0]
+    beta = popt[1]
+
+    Y_err = np.sqrt(pcov[0][0])
+    beta_err = np.sqrt(pcov[1][1])
+
+print(f'Fit (eff err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
+
+x_theoretical = np.linspace(1.0, length, 100)
 plt.plot(x_theoretical, post_impact(x_theoretical, Y, beta), label=r'$\beta =$' + f'{beta:.3f}', linestyle=':', color = "black")
 
 #plt.errorbar(x, y, yerr=y_err, xerr=x_err, linestyle="", marker=".", label = f"20_power_2.0")

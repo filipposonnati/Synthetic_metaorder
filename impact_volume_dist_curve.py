@@ -96,6 +96,17 @@ delta_err = np.sqrt(pcov[1][1])
 
 print(f'Fit (y err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
 
+for i in range(10):
+    err_core = np.sqrt(y_err_core**2 + (Y * delta * x_core**(delta - 1) * x_err_core)**2)
+    popt, pcov = curve_fit(power_law, x_core, y_core, sigma=err_core, absolute_sigma=True)
+
+    Y = popt[0]
+    delta = popt[1]
+    Y_err = np.sqrt(pcov[0][0])
+    delta_err = np.sqrt(pcov[1][1])
+
+print(f'Fit (eff err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
+
 fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(10, 10), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
 ax2 = ax1.twinx()
 

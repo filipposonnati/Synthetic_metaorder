@@ -42,6 +42,8 @@ for path in paths:
 
     trades_total = pd.concat([trades_total, daily_trades])
 
+print('Cumulative fit')
+
 # 1. Definizione dei bin (uso geomspace per chiarezza, o mantieni il tuo logspace)
 bins = np.logspace(np.log10(trades_total['PartialVolume'].min()), 
                    np.log10(trades_total['PartialVolume'].max()), 51)
@@ -86,6 +88,17 @@ delta_err = np.sqrt(pcov[1][1])
 
 print(f'Fit (y err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
 
+for i in range(10):
+    err_core = np.sqrt(y_err_core**2 + (Y * delta * x_core**(delta - 1) * x_err_core)**2)
+    popt, pcov = curve_fit(power_law, x_core, y_core, sigma=err_core, absolute_sigma=True)
+
+    Y = popt[0]
+    delta = popt[1]
+    Y_err = np.sqrt(pcov[0][0])
+    delta_err = np.sqrt(pcov[1][1])
+
+print(f'Fit (eff err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
+
 # 3. Creazione del Plot
 fig, ax1 = plt.subplots(figsize=(8, 6))
 
@@ -124,6 +137,8 @@ plt.savefig('images\\impact_intra_order.png')
 
 
 
+print('Square root fit')
+
 trades_total['Ratio'] = trades_total['PartialImpact'] / np.sqrt(trades_total['MetaVolume'])
 trades_total['NormalizedVolume'] = trades_total['PartialVolume'] / trades_total['MetaVolume']
 
@@ -136,15 +151,18 @@ trades_total['bin'] = pd.cut(trades_total['NormalizedVolume'], bins=bins, includ
 # 2. Assegnazione e Raggruppamento per la curva d'impatto
 trades_total['bin'] = pd.cut(trades_total['NormalizedVolume'], bins=bins, include_lowest=True)
 grouped = trades_total.groupby('bin', observed=True).agg({
-    'NormalizedVolume': 'mean',
-    'Ratio': 'mean',
-    'PartialImpact' : 'mean',
-    'MetaVolume' : 'mean'
+    'NormalizedVolume': ['mean', 'std'],
+    'Ratio': ['mean', 'std', 'count'],
 }).dropna()
 
-x = grouped['NormalizedVolume'].to_numpy()
-y = grouped['Ratio'].to_numpy()
+grouped.columns = ['NormalizedVolume_mean', 'NormalizedVolume_std', 'Ratio_mean', 'Ratio_std', 'count']
+
+x = grouped['NormalizedVolume_mean'].to_numpy()
+y = grouped['Ratio_mean'].to_numpy()
 #y = grouped['PartialImpact'].to_numpy() / np.sqrt(grouped['MetaVolume'].to_numpy()) # Ratio computed on the means
+
+x_err = grouped['NormalizedVolume_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
+y_err = grouped['Ratio_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
 
 popt, pcov = curve_fit(square_root, x, y)
 
@@ -152,6 +170,22 @@ Y = popt[0]
 Y_err = np.sqrt(pcov[0][0])
 
 print(f'Fit (no err): Y = {Y} +- {Y_err}')
+
+popt, pcov = curve_fit(square_root, x, y, sigma=y_err, absolute_sigma=True)
+
+Y = popt[0]
+Y_err = np.sqrt(pcov[0][0])
+
+print(f'Fit (y err): Y = {Y} +- {Y_err}')
+
+for i in range(10):
+    err = np.sqrt(y_err**2 + (Y * 0.5 * x**(-0.5) * x_err)**2)
+    popt, pcov = curve_fit(square_root, x, y, sigma=err, absolute_sigma=True)
+
+    Y = popt[0]
+    Y_err = np.sqrt(pcov[0][0])
+
+print(f'Fit (eff err): Y = {Y} +- {Y_err}')
 
 # 3. Creazione del Plot
 fig = plt.subplots(figsize=(8, 6))
@@ -181,6 +215,8 @@ plt.savefig('images\\impact_intra_order_ratio.png')
 
 
 
+print('Flat fit')
+
 trades_total['Ratio'] = trades_total['PartialImpact'] / np.sqrt(trades_total['PartialVolume'])
 trades_total['NormalizedVolume'] = trades_total['PartialVolume'] / trades_total['MetaVolume']
 
@@ -193,15 +229,17 @@ trades_total['bin'] = pd.cut(trades_total['NormalizedVolume'], bins=bins, includ
 # 2. Assegnazione e Raggruppamento per la curva d'impatto
 trades_total['bin'] = pd.cut(trades_total['NormalizedVolume'], bins=bins, include_lowest=True)
 grouped = trades_total.groupby('bin', observed=True).agg({
-    'NormalizedVolume': 'mean',
-    'Ratio': 'mean',
-    'PartialImpact' : 'mean',
-    'PartialVolume' : 'mean'
+    'NormalizedVolume': ['mean', 'std'],
+    'Ratio': ['mean', 'std', 'count'],
 }).dropna()
 
-x = grouped['NormalizedVolume'].to_numpy()
-#y = grouped['PartialImpact'].to_numpy() / np.sqrt(grouped['PartialVolume'].to_numpy())
-y = grouped['Ratio'].to_numpy()
+grouped.columns = ['NormalizedVolume_mean', 'NormalizedVolume_std', 'Ratio_mean', 'Ratio_std', 'count']
+
+x = grouped['NormalizedVolume_mean'].to_numpy()
+y = grouped['Ratio_mean'].to_numpy()
+
+x_err = grouped['NormalizedVolume_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
+y_err = grouped['Ratio_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
 
 popt, pcov = curve_fit(constant, x, y)
 
@@ -209,6 +247,13 @@ Y = popt[0]
 Y_err = np.sqrt(pcov[0][0])
 
 print(f'Fit (no err): Y = {Y} +- {Y_err}')
+
+popt, pcov = curve_fit(constant, x, y, sigma = y_err, absolute_sigma=True)
+
+Y = popt[0]
+Y_err = np.sqrt(pcov[0][0])
+
+print(f'Fit (y err): Y = {Y} +- {Y_err}')
 
 # 3. Creazione del Plot
 fig = plt.subplots(figsize=(8, 6))
