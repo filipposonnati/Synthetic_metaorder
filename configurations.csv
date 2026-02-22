@@ -1,0 +1,7 @@
+nb_traders,kind,exponent
+4,power,2.0
+4,uniform,0.0
+20,power,2.0
+20,power,4.0
+20,uniform,0.0
+40,power,2.0
