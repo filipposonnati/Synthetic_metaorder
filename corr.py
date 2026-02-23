@@ -11,7 +11,7 @@ def power_law(tau, L, gamma):
     return L * np.power(tau, -gamma)
 
 # --- Function for automatic tau_min (Tail) search ---
-def find_optimal_tau_min_tail(x, y, model_func, p0):
+def find_optimal_tau_min_tail(x, y, y_err , model_func, p0):
     """
     Finds the minimum lag (tau_min) that minimizes the KS distance 
     between the data tail and the model.
@@ -30,7 +30,7 @@ def find_optimal_tau_min_tail(x, y, model_func, p0):
         if len(x[mask]) < 10: continue  # Ensure enough points for fit
         
         try:
-            popt, _ = curve_fit(model_func, x[mask], y[mask], p0=p0, maxfev=2000)
+            popt, _ = curve_fit(model_func, x[mask], y[mask], sigma=y_err[mask], absolute_sigma=True, p0=p0, maxfev=2000)
             y_model = model_func(x[mask], *popt)
             
             # KS test on normalized shape (treating it like a probability distribution)
@@ -44,7 +44,7 @@ def find_optimal_tau_min_tail(x, y, model_func, p0):
     return best_tau_min
 
 # --- Function for automatic tau_max (Head) search ---
-def find_optimal_tau_max_head(x, y, model_func, p0, limit_idx):
+def find_optimal_tau_max_head(x, y, y_err, model_func, p0, limit_idx):
     """
     Finds the maximum lag (tau_max) that minimizes the KS distance 
     between the data head and the model.
@@ -66,7 +66,7 @@ def find_optimal_tau_max_head(x, y, model_func, p0, limit_idx):
         if len(x[mask]) < 5: continue 
 
         try:
-            popt, _ = curve_fit(model_func, x[mask], y[mask], p0=p0, maxfev=2000)
+            popt, _ = curve_fit(model_func, x[mask], y[mask], sigma=y_err[mask], absolute_sigma=True, p0=p0, maxfev=2000)
             y_model = model_func(x[mask], *popt)
             
             # KS test on normalized shape
@@ -93,7 +93,7 @@ plt.rcParams.update({
 # --- Data Loading ---
 data_dir = 'database\\data'
 paths = listdir(data_dir)
-max_lag = 1000  
+max_lag = 1000
 all_daily_corrs = []
 
 print("Loading data...")
@@ -112,15 +112,16 @@ if not all_daily_corrs:
 
 data_matrix = np.array(all_daily_corrs)
 avg_corr = np.mean(data_matrix, axis=0)
+#std_error = np.sqrt(np.var(data_matrix, axis=0))
 std_error = sem(data_matrix, axis=0)
 lags = np.arange(1, max_lag + 1)
 
 # --- Optimized Tail Analysis (Power Law) ---
 print("Analyzing Tail...")
 # Find best start point for the tail
-tau_min_tail = find_optimal_tau_min_tail(lags, avg_corr, power_law, [0.1, 0.5])
+tau_min_tail = find_optimal_tau_min_tail(lags, avg_corr, std_error, power_law, [0.1, 0.5])
 mask_tail = lags >= tau_min_tail
-popt_tail, pcov_tail = curve_fit(power_law, lags[mask_tail], avg_corr[mask_tail], sigma=std_error[mask_tail])
+popt_tail, pcov_tail = curve_fit(power_law, lags[mask_tail], avg_corr[mask_tail], sigma=std_error[mask_tail], absolute_sigma=True)
 
 # --- Optimized Head Analysis (Power Law) ---
 print("Analyzing Head...")
@@ -128,9 +129,9 @@ print("Analyzing Head...")
 tail_start_idx = np.where(lags == tau_min_tail)[0][0]
 
 # Find best end point for the head (searching from start up to tail_start)
-tau_max_head = find_optimal_tau_max_head(lags, avg_corr, power_law, [0.1, 0.2], tail_start_idx)
+tau_max_head = find_optimal_tau_max_head(lags, avg_corr, std_error, power_law, [0.1, 0.2], tail_start_idx)
 mask_head = lags <= tau_max_head
-popt_head, pcov_head = curve_fit(power_law, lags[mask_head], avg_corr[mask_head], sigma=std_error[mask_head])
+popt_head, pcov_head = curve_fit(power_law, lags[mask_head], avg_corr[mask_head], sigma=std_error[mask_head], absolute_sigma=True)
 
 # --- Plotting ---
 fig = plt.figure(figsize=(14, 10))
@@ -140,12 +141,11 @@ grid = plt.GridSpec(4, 2, hspace=0.4)
 ax1 = fig.add_subplot(grid[:3, :])
 
 # Plot Data with Error bars
-ax1.errorbar(lags, avg_corr, yerr=std_error, color='gray', alpha=0.4, linestyle='', marker='.', label='Data')
+ax1.plot(lags, avg_corr, color='gray', alpha=0.6, linestyle='-', marker='', label='Data')
 
 # Plot Tail Fit
 x_fine_tail = np.geomspace(tau_min_tail, max_lag, 200)
-ax1.plot(x_fine_tail, power_law(x_fine_tail, *popt_tail), color='crimson', lw=3, 
-         label=f'Tail Fit')
+ax1.plot(x_fine_tail, power_law(x_fine_tail, *popt_tail), color='crimson', lw=3, label=f'Tail Fit')
 
 # Plot Head Fit
 x_fine_head = np.geomspace(1, tau_max_head, 100)
@@ -178,7 +178,7 @@ ax2.scatter(lags[mask_head], res_head, color='forestgreen', s=15, alpha=0.6)
 ax2.axhline(0, color='black', lw=1)
 ax2.set_xscale('log') # Log scale for residuals x-axis often helps visibility
 
-plt.tight_layout()
+#plt.tight_layout()
 
 plt.savefig('images\\correlation_trade_sign.png', dpi=300, bbox_inches='tight')
 plt.show()

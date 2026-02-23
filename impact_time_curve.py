@@ -78,7 +78,7 @@ def save(index_time):
 
             post_trades.to_csv(f'database\\post_trades\\20_power_2.0_{index_time}.csv', mode='a', index=False, header=not file_exists)
 
-length = 2
+length = 3
 
 for index_time in range(length):
     if not os.path.exists(f'database\\post_trades\\20_power_2.0_{index_time}.csv'):
@@ -103,7 +103,7 @@ for path in paths[:length]:
 
     index = int(match.group(1))
 
-    bins = np.linspace(0.0 + index, 1.0 + index, 11)
+    bins = np.linspace(0.0 + index, 1.0 + index, 41)
 
     post_trades['bin'] = pd.cut(post_trades['NormalizedTime'], bins=bins, include_lowest=True) 
 
@@ -162,14 +162,14 @@ for i in range(10):
 print(f'Fit (eff err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
 
 x_theoretical = np.linspace(1.0, length, 100)
-plt.plot(x_theoretical, post_impact(x_theoretical, Y, beta), label=r'$\beta =$' + f'{beta:.3f}', linestyle=':', color = "black")
+plt.plot(x_theoretical, post_impact(x_theoretical, Y, beta), linestyle=':', color = "black")
 
 #plt.errorbar(x, y, yerr=y_err, xerr=x_err, linestyle="", marker=".", label = f"20_power_2.0")
 plt.plot(times_analysis, bins_analysis, linestyle="", marker="o", color='C0')
 
 plt.xlabel(r'$t / T$')
 plt.ylabel(r'$I(t) / \sqrt{Q}$')
-plt.legend()
+#plt.legend()
 plt.grid(True, which="both", ls="-")
 
 plt.savefig('images\\impact_time_curve.png')
