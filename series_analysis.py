@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from statsmodels.tsa.stattools import acf
+import powerlaw
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -60,12 +61,9 @@ def perform_analysis(gamma_target, n_total=10000000):
     x_axis = np.arange(1, len(acf_values) + 1)
     ensure_dir('images/series')
 
-    # --- 3. ACF DUAL FITTING (Head vs Tail) ---
-    # Head: lags 2 to 10 | Tail: lags 50 to 500
-    mask_acf_head = (x_axis >= 2) & (x_axis <= 10)
-    mask_acf_tail = (x_axis >= 50) & (x_axis <= 500)
+    # --- 3. ACF DUAL FITTING ---
+    mask_acf_tail = (x_axis >= 100)
     
-    popt_acf_h, _ = curve_fit(linear_func, np.log(x_axis[mask_acf_head]), np.log(acf_values[mask_acf_head]))
     popt_acf_t, _ = curve_fit(linear_func, np.log(x_axis[mask_acf_tail]), np.log(acf_values[mask_acf_tail]))
 
     # --- 4. RUNS DUAL FITTING (Head vs Tail) ---
@@ -82,37 +80,62 @@ def perform_analysis(gamma_target, n_total=10000000):
     # Plot ACF
     ax1.loglog(x_axis, acf_values, 'o', markersize=3, alpha=0.4, label='ACF Data')
     x_fit = np.geomspace(1, 1000, 100)
-    ax1.plot(x_fit, np.exp(popt_acf_h[1]) * (x_fit**popt_acf_h[0]), 'g--', label=f'Head $\gamma$: {-popt_acf_h[0]:.2f}')
     ax1.plot(x_fit, np.exp(popt_acf_t[1]) * (x_fit**popt_acf_t[0]), 'r-', label=f'Tail $\gamma$: {-popt_acf_t[0]:.2f}')
     ax1.set_title(f"ACF Analysis (Target $\gamma$={gamma_target})")
     ax1.legend()
 
-    # Plot Runs
-    ax2.loglog(x_hist, hist, 'o', markersize=3, alpha=0.4, label='Run Data')
-    ax2.plot(x_fit, np.exp(popt_run_h[1]) * (x_fit**popt_run_h[0]), 'g--', label=f'Head $\mu$: {-popt_run_h[0]:.2f}')
-    ax2.plot(x_fit, np.exp(popt_run_t[1]) * (x_fit**popt_run_t[0]), 'r-', label=f'Tail $\mu$: {-popt_run_t[0]:.2f}')
-    ax2.set_title("Run-Length Distribution")
+    # --- All'interno di perform_analysis ---
+
+    # 1. Fit automatico (Truncated Power Law)
+    fit = powerlaw.Fit(runs, discrete=True)
+    mu_auto = fit.truncated_power_law.alpha
+    xmin_auto = fit.xmin
+
+    # 2. Istogramma Lineare (Mantenendo linspace come richiesto)
+    # Usiamo un numero di bin fisso o proporzionale al range
+    bins_linear = np.linspace(min(runs), max(runs), 100) # Ridotto a 100 per leggibilità
+    counts, bin_edges = np.histogram(runs, bins=bins_linear, density=True)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    # Filtra i bin vuoti per evitare log(0) nel plot
+    mask = counts > 0
+    bin_centers = bin_centers[mask]
+    counts = counts[mask]
+
+    # 3. Curva di Fit Lineare
+    # La percentuale di dati nella coda serve a scalare la PDF teorica
+    # affinché si integri correttamente nell'istogramma totale
+    perc_coda = np.sum(runs >= xmin_auto) / len(runs)
+
+    # IMPORTANTE: Usa linspace per x_fit se vuoi campionamento lineare
+    x_fit = np.linspace(xmin_auto, max(runs), 500)
+    y_fit = fit.truncated_power_law.pdf(x_fit) * perc_coda
+
+    # 4. Plot
+    ax2.loglog(bin_centers, counts, 'ob', markersize=4, alpha=0.4, label='Dati (Lin-bins)')
+    ax2.loglog(x_fit, y_fit, 'r-', linewidth=2, label=f'Fit Troncato ($\mu$={mu_auto:.2f})')
+    ax2.axvline(x=xmin_auto, color='k', linestyle='--', alpha=0.3, label=f'xmin={xmin_auto:.1f}')
+
+    ax2.set_title("Distribuzione Integrale (Testa + Coda)")
+    ax2.set_xlabel("Lunghezza Run")
+    ax2.set_ylabel("Densità di Probabilità")
     ax2.legend()
 
     plt.tight_layout()
-    plt.savefig('images/series/dual_analysis.png')
+    plt.savefig('images/series/dual_plot.png')
     plt.close()
 
     # Return slopes for statistics (gamma = -slope)
-    return -popt_acf_h[0], -popt_acf_t[0], -popt_run_h[0], -popt_run_t[0]
+    return -popt_acf_t[0], -popt_run_h[0], mu_auto
 
 # =============================================================================
 # MAIN
 # =============================================================================
 
-if __name__ == "__main__":
-    ITERATIONS = 3
-    gamma_in = 0.7
-    
+def avg_exponents(gamma_in, ITERATIONS = 10):
     results = [] # Store results as tuples
      
     for i in range(ITERATIONS):
-        print(f"Iteration {i+1}...")
         res = perform_analysis(gamma_in)
         results.append(res)
     
@@ -120,10 +143,47 @@ if __name__ == "__main__":
     means = np.mean(results, axis=0)
     stds = np.std(results, axis=0)
 
-    labels = ["ACF Gamma (Head)", "ACF Gamma (Tail)", "Run Mu (Head)", "Run Mu (Tail)"]
-    
-    print("\n" + "="*40)
-    print(f"{'Metric':<20} | {'Mean':<10} | {'Std':<10}")
-    print("-"*40)
-    for i in range(4):
-        print(f"{labels[i]:<20} | {means[i]:<10.4f} | {stds[i]:<10.4f}")
+    return means, stds
+
+if __name__ == "__main__":
+    x = np.linspace(0.1, 0.6, 6)
+
+    gamma = []
+    gamma_err = []
+    mu = []
+    mu_err = []
+
+    for gamma_th in x:
+        means, stds = avg_exponents(gamma_th)
+
+        gamma.append(means[0])
+        gamma_err.append(stds[0])
+
+        mu.append(means[2])
+        mu_err.append(stds[2])
+
+    mu = np.array(mu)
+    mu_err = np.array(mu_err)
+    gamma = np.array(gamma)
+    gamma_err = np.array(gamma_err)
+
+    print(mu, mu_err, gamma, gamma_err)
+
+    popt, pcov = curve_fit(linear_func, mu, gamma, sigma=gamma_err, absolute_sigma=True)
+
+    err = np.sqrt(mu_err**2 + (popt[0] * gamma_err)**2)
+
+    popt, pcov = curve_fit(linear_func, mu, gamma, sigma=err, absolute_sigma=True)
+
+    print(popt)
+
+    x = np.linspace(min(mu), max(mu), 2)
+
+    fig = plt.plot()
+    plt.errorbar(mu, gamma, yerr=gamma_err, xerr=mu_err, fmt='o', capsize=0, markersize=6, markeredgecolor='white')
+    plt.plot(x, linear_func(x, *popt))
+    plt.savefig('images\\series\\gamma_mu_graph.png')
+    plt.grid()
+    plt.xlabel(r'$\mu$')
+    plt.ylabel(r'$\gamma$')
+    plt.show()
