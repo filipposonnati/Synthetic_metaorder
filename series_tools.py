@@ -1,29 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from series_creation import generate_ffm
 
 # =============================================================================
-# 1. GENERATORE FFM ROBUSTO
-# =============================================================================
-def generate_power_law_binary(n_points, gamma):
-    """Genera serie binaria con memoria lunga usando FFM e zero-padding."""
-    beta = 1.0 - gamma
-    N = 2 * n_points 
-    
-    noise = np.random.normal(size=N)
-    freq_dom = np.fft.rfft(noise)
-    freqs = np.fft.rfftfreq(N)
-    freqs[0] = 1e-10 
-    
-    filter_array = freqs ** (-beta / 2.0)
-    filter_array[0] = 0.0 
-    
-    correlated_gauss = np.fft.irfft(freq_dom * filter_array, n=N)
-    continuous_series = correlated_gauss[:n_points]
-    
-    return np.where(continuous_series >= 0, 1, -1)
-
-# =============================================================================
-# 2. DETRENDED FLUCTUATION ANALYSIS (DFA)
+# DETRENDED FLUCTUATION ANALYSIS (DFA)
 # =============================================================================
 def compute_dfa(series, min_scale=10, max_scale=None, num_scales=30):
     """
@@ -71,7 +51,7 @@ if __name__ == "__main__":
     gamma_target = 0.3 # Esponente target: C(t) ~ t^-0.3
     
     print(f"Generazione serie binaria (n={n_points}, gamma={gamma_target})...")
-    serie_binaria = generate_power_law_binary(n_points, gamma_target)
+    serie_binaria = generate_ffm(n_points, gamma_target)
     
     print("Calcolo DFA in corso...")
     scales, F_n = compute_dfa(serie_binaria, min_scale=10, max_scale=10000, num_scales=40)

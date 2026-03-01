@@ -14,48 +14,9 @@ def linear_func(x, slope, intercept):
     """Standard linear function for curve fitting in log-log space."""
     return intercept + slope * x
 
-def ensure_dir(path):
-    """Ensures that the directory for saving plots exists."""
-    if not os.path.exists(path):
-        os.makedirs(path)
-
 # =============================================================================
 # CORE LOGIC
 # =============================================================================
-
-def generate_correlated_sign_series(n_points, gamma):
-    """Generates a binary series with power-law correlation C(t) ~ t^-gamma."""
-    white_noise = np.random.normal(size=n_points)
-    freq_dom = np.fft.fft(white_noise)
-    freqs = np.fft.fftfreq(n_points)
-    
-    beta = 1 - gamma
-    
-    with np.errstate(divide='ignore', invalid='ignore'):
-        filter_array = np.power(np.abs(freqs), -(beta / 2.0))
-    
-    filter_array[0] = 0 
-    correlated_gauss = np.real(np.fft.ifft(freq_dom * filter_array))
-    return np.where(correlated_gauss >= 0, 1, -1)
-
-def generate_arfima_fast(n, gamma):
-    d = (1.0 - gamma) / 2.0
-    
-    # Per una memoria "perfetta", M dovrebbe essere pari a n
-    M = n 
-    
-    # Generazione pesi più veloce con cumprod
-    k = np.arange(1, M)
-    w = np.concatenate(([1.0], np.cumprod((k - 1 - d) / k)))
-    
-    # Rumore bianco con padding per evitare l'effetto transitorio
-    eps = np.random.normal(size=n + M)
-    
-    # Convoluzione
-    x = np.convolve(eps, w, mode='valid')[:n]
-    
-    # Clipping binario
-    return np.where(x >= 0, 1, -1)
 
 def compute_runs(sign_series):
     """Computes the lengths of consecutive identical symbols."""
@@ -72,7 +33,7 @@ def perform_analysis(gamma_target, n_total=100000000, lim = 1.0):
     # 1. Generation
     #sign_series = generate_correlated_sign_series(2 * n_total, gamma_target)[:n_total]
     #sign_series = generate_arfima_fast(n_total, gamma_target)
-    sign_series = series_tools.generate_power_law_binary(n_total, gamma_target)
+    sign_series = series_tools.generate_ffm(n_total, gamma_target)
 
     """
     print('fit dfa')
@@ -133,13 +94,8 @@ def perform_analysis(gamma_target, n_total=100000000, lim = 1.0):
     # 2. Calcola la probabilità per ogni elemento
     p_all = 1.0 - np.arange(n_runs) / n_runs
 
-    # 3. Prendi solo l'ULTIMA occorrenza di ogni valore unico (il punto più basso)
-    # np.unique con return_index=True e flip prende l'indice più alto per ogni valore
     valori_unici, indici = np.unique(sorted_runs, return_index=True)
     
-    # Per avere il valore "più basso" nella scala 1-arange, 
-    # dobbiamo prendere l'indice dell'ultima occorrenza di ogni numero
-    # Un trucco veloce è usare searchsorted:
     indices = np.searchsorted(sorted_runs, valori_unici, side='right') - 1
     
     x_ccdf_clean = valori_unici
