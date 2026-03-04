@@ -126,6 +126,12 @@ def perform_analysis(gamma_target, n_total=10000000, lim=1.0):
     # The ACF exponent gamma is the negative of the slope (C(tau) ~ tau^-gamma)
     gamma_fit = -popt_acf_t[0]
 
+    fit     = powerlaw.Fit(runs, discrete=True)
+    exponent = fit.power_law.alpha   # same quantity, more robust estimate
+    x_min   = fit.power_law.xmin
+
+    print(exponent, x_min)
+
     # --- 4. Run-length CCDF construction ---
     # We estimate the Complementary CDF (CCDF) empirically: P(X > x).
     # For a power-law distribution P(x) ~ x^(-mu), the CCDF scales as
