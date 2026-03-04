@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from statsmodels.tsa.stattools import acf
 import powerlaw
-import series_tools
+from series_creation import generate_ffm
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -29,11 +29,12 @@ def compute_runs(sign_series):
 # DUAL ANALYSIS (ACF & RUNS)
 # =============================================================================
 
-def perform_analysis(gamma_target, n_total=100000000, lim = 1.0):
+def perform_analysis(gamma_target, n_total=10000000, lim = 1.0):
     # 1. Generation
     #sign_series = generate_correlated_sign_series(2 * n_total, gamma_target)[:n_total]
     #sign_series = generate_arfima_fast(n_total, gamma_target)
-    sign_series = series_tools.generate_ffm(n_total, gamma_target)
+    series = generate_ffm(n_total, gamma_target)
+    sign_series = np.where(series >= 0, 1, -1)
 
     """
     print('fit dfa')
@@ -118,7 +119,7 @@ def perform_analysis(gamma_target, n_total=100000000, lim = 1.0):
     ax2.plot(x_plot, y_plot, 'r-', linewidth=2, label=f'CCDF Fit ($\mu$={mu_ccdf:.2f})')
 
     ax2.set_xlabel("Lunghezza Run")
-    ax2.set_ylabel("P(X > x) / Density")
+    ax2.set_ylabel("P(X > x)")
     ax2.set_title("Run Length Distribution")
     ax2.grid()
     ax2.legend()
@@ -135,7 +136,7 @@ def perform_analysis(gamma_target, n_total=100000000, lim = 1.0):
 if __name__ == "__main__":
     gamma_th = np.linspace(0.1, 0.6, 6)
 
-    xlim = [400.0, 200.0, 100.0, 50.0, 40.0, 30.0]
+    xlim = [300.0, 100.0, 50.0, 40.0, 30.0, 20.0]
 
     gamma_fit = []
     mu_fit = []
@@ -144,7 +145,7 @@ if __name__ == "__main__":
         gamma = gamma_th[i]
         lim = xlim[i]
         print(f'{gamma:.2f}')
-        g_fit, m_fit, _ = perform_analysis(gamma, lim=lim)
+        g_fit, m_fit = perform_analysis(gamma, lim=lim)
 
         gamma_fit.append(g_fit)
         mu_fit.append(m_fit)

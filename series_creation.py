@@ -60,7 +60,7 @@ def generate_arfima(n, d, ar_params=None, ma_params=None, std_dev=1.0):
 
 if __name__ == "__main__":
     n = 1000000
-    d = 0.3  # Set to 0.3 to stay within stationary bounds (d < 0.5)
+    d = 0.2  # Set to 0.3 to stay within stationary bounds (d < 0.5)
     gamma = 1 - 2*d
     print(f'Parameters: d = {d}, expected gamma (ACF decay) = {gamma}')
 

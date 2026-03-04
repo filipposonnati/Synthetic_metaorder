@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = ""
+model = "arfima_10"
 
 data_dir = 'database\\data'
 
