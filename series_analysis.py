@@ -45,76 +45,7 @@ def compute_runs(sign_series):
 
     return run_lengths
 
-def fit_plot(gamma_target, n_total=100000000, min = False):
-    """
-    Generates a long-memory binary series with target exponent gamma_target,
-    then performs two complementary analyses:
-      1. ACF analysis — fits a power law to the autocorrelation function tail
-         to recover the correlation exponent gamma.
-      2. Run-length CCDF analysis — fits a power law to the complementary
-         cumulative distribution of run lengths to recover the run exponent mu.
-
-    Both analyses produce a dual plot and return the fitted exponents.
-
-    Parameters
-    ----------
-    gamma_target : float — target ACF decay exponent (C(tau) ~ tau^-gamma)
-    n_total      : int   — length of the series to generate (default: 10 million)
-    lim          : float — lower cutoff for the CCDF power-law fit (default: 1.0)
-
-    Returns
-    -------
-    gamma_fit : float — ACF exponent estimated from the tail fit
-    mu_ccdf   : float — run-length exponent estimated from the CCDF fit
-    """
-
-    # Series generation
-    # Generate a continuous long-memory series via FFM, then binarize by sign
-    d = 0.5 - 0.5 * gamma_target
-    series = generate_ffm(n_total, d)
-    sign_series = np.where(series >= 0, 1, -1)
-
-    # (The DFA block below is commented out but left for reference.
-    #  It was an alternative way to estimate gamma via Detrended Fluctuation Analysis.)
-    """
-    print('fit dfa')
-    scales, F_n = bin_gen.compute_dfa(sign_series, min_scale=10, max_scale=10000, num_scales=40)
-    log_scales = np.log(scales)
-    log_Fn = np.log(F_n)
-    alpha, intercept = np.polyfit(log_scales, log_Fn, 1)
-    gamma_estimated = 2.0 - 2.0 * alpha
-    print(gamma_estimated)
-    """
-
-    # Compute ACF up to lag 1000 using FFT for efficiency
-    acf_values = acf(sign_series, nlags=1000, fft=True)
-
-    # Compute run lengths of the binary series
-    runs = compute_runs(sign_series)
-
-    """
-    # (Histogram bins — computed but not directly used in the final plot below)
-    bins = np.linspace(1.0, 1000.0, 1000)
-    hist, _ = np.histogram(runs, bins=bins)
-
-    # Lag axis for the ACF (starts at lag 1 to align with the power-law fit)
-    x_axis = np.arange(1, len(acf_values) + 1)
-
-    # --- 3. ACF power-law fit ---
-    # Fit only the tail of the ACF (lags >= 10) where the power-law behavior dominates.
-    # We also restrict to positive ACF values to avoid log of non-positive numbers.
-    mask_acf_tail = (x_axis >= 10) & (acf_values > 0)
-
-    # Fit log(ACF) = slope * log(lag) + intercept in log-log space
-    popt_acf_t, _ = curve_fit(
-        linear_func,
-        np.log(x_axis[mask_acf_tail]),
-        np.log(acf_values[mask_acf_tail])
-    )
-    # The ACF exponent gamma is the negative of the slope (C(tau) ~ tau^-gamma)
-    gamma_fit = -popt_acf_t[0]
-    """
-
+def fit_plot(runs, min = False):
     # ── FIT ──────────────────────────────────────────────────────────────────────
     if min:
         fit = powerlaw.Fit(runs, discrete=True)
@@ -227,13 +158,23 @@ def fit_plot(gamma_target, n_total=100000000, min = False):
     """
 
     if min:
-        plt.savefig(f'images\\series\\powerlaw_fit_{gamma_target}_min.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.savefig(f'images\\series\\powerlaw_fit_{gamma}_min.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
     else:
-        plt.savefig(f'images\\series\\powerlaw_fit_{gamma_target}.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.savefig(f'images\\series\\powerlaw_fit_{gamma}.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
 
 if __name__ == "__main__":
+    n = 100000000
     gamma = 0.6
     print(f'Processing gamma = {gamma:.2f}')
 
-    fit_plot(gamma)
-    fit_plot(gamma, min = True)
+    # Series generation
+    # Generate a continuous long-memory series via FFM, then binarize by sign
+    d = 0.5 - 0.5 * gamma
+    series = generate_ffm(n, d)
+    sign_series = np.where(series >= 0, 1, -1)
+
+    # Compute run lengths of the binary series
+    runs = compute_runs(sign_series)
+
+    fit_plot(runs)
+    fit_plot(runs, min = True)

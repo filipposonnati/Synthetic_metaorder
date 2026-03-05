@@ -4,144 +4,135 @@ import matplotlib.pyplot as plt
 import methods
 import os
 from os import listdir
-from scipy.optimize import curve_fit
-from scipy.stats import ks_2samp
+import powerlaw
+import matplotlib.gridspec as gridspec
 
-# --- Style Configuration (Inherited from your first script) ---
+# --- Style Configuration ---
 plt.rcParams.update({
-    'font.size': 12,          # Base text size
-    'axes.titlesize': 20,     # Title size
-    'axes.labelsize': 16,     # Axis labels size
-    'xtick.labelsize': 12,    # X-axis tick labels
-    'ytick.labelsize': 12,    # Y-axis tick labels
-    'legend.fontsize': 14     # Legend size
+    'font.size': 12,
+    'axes.titlesize': 18,
+    'axes.labelsize': 14,
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'legend.fontsize': 10
 })
 
-# --- Fit Models ---
-def power_law_dist(x, C, alpha):
-    """Standard power law distribution model."""
-    return C * np.power(x, -alpha)
-
-# --- Automatic search for x_min ---
-def find_optimal_xmin(x, y, model_func, p0):
-    """Finds the start of the tail that minimizes the KS distance for a given model."""
-    start_idx = max(1, int(len(x) * 0.05))
-    end_idx = int(len(x) * 0.7)
-    best_xmin = x[start_idx]
-    min_ks = np.inf
-    
-    for i in range(start_idx, end_idx):
-        xmin_test = x[i]
-        mask = x >= xmin_test
-        if len(x[mask]) < 8: continue 
-        try:
-            popt, _ = curve_fit(model_func, x[mask], y[mask], p0=p0)
-            y_model = model_func(x[mask], *popt)
-            # Normalize to compare distributions via KS test
-            stat, _ = ks_2samp(y[mask]/np.sum(y[mask]), y_model/np.sum(y_model))
-            if stat < min_ks:
-                min_ks = stat
-                best_xmin = xmin_test
-        except:
-            continue
-    return best_xmin
-
-# --- Configuration and Directory ---
+# --- Configuration ---
 data_dir = 'database\\data'
-iterations = 100
+iterations = 10
 nb_traders = 20
 kind = 'power'
 exponent = 2.0
-csv_name = f'database\\dist_meta_child_{iterations}_{nb_traders}_{kind}_{exponent}.csv'
 
-# --- 1. DATA GENERATION OR LOADING ---
-if os.path.exists(csv_name):
-    print(f"File '{csv_name}' found. Loading data...")
-    df_results = pd.read_csv(csv_name)
-    bin_centers = df_results['NbChild'].values
-    mean_density = df_results['Mean_Density'].values
-    std_density = df_results['Std_Dev'].values
-else:
-    print(f"File '{csv_name}' not found. Starting simulations...")
-    all_densities = []
-    paths = np.array(listdir(data_dir))
+# --- Data Loading/Generation ---
+paths = np.array(listdir(data_dir))
+meta_tot = pd.DataFrame()
 
-    for i in range(iterations):
-        print(f'Iteration: {i + 1}/{iterations}')
-        meta_tot = pd.DataFrame()
-        for path in paths:
-            l = len(meta_tot)
-            meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
-            meta_tot = pd.concat([meta_tot, meta])
-        
-        data = meta_tot['NbChild']
-        if i == 0:
-            min_v, max_v = int(data.min()), int(data.max())
-            bins = np.arange(min_v - 0.5, max_v + 1.5, 1)
-            bin_centers = (bins[:-1] + bins[1:]) / 2
+for i in range(iterations):
+    print(f'Iteration: {i + 1}/{iterations}')
+    for path in paths:
+        l = len(meta_tot)
+        meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
+        meta_tot = pd.concat([meta_tot, meta['NbChild']])
 
-        counts, _ = np.histogram(data, bins=bins, density=True)
-        all_densities.append(counts)
+data = meta_tot['NbChild'].to_numpy()
 
-    all_densities = np.array(all_densities)
-    mean_density = np.mean(all_densities, axis=0)
-    std_density = np.std(all_densities, axis=0)
+# --- Fit con la libreria powerlaw ---
+# Il parametro discrete=True è fondamentale se NbChild sono numeri interi
+fit = powerlaw.Fit(data, discrete=True)
 
-    df_results = pd.DataFrame({
-        'NbChild': bin_centers,
-        'Mean_Density': mean_density,
-        'Std_Dev': std_density
-    })
-    df_results.to_csv(csv_name, index=False)
+tpl = fit.truncated_power_law
+alpha   = tpl.alpha       # esponente
+Lambda  = tpl.Lambda      # parametro di taglio (decay rate)
+x_min   = tpl.xmin        # x_min stimato
 
-# --- 2. AUTOMATIC TAIL ANALYSIS ---
-# Power Law Tail Fit
-xmin_tail = find_optimal_xmin(bin_centers, mean_density, power_law_dist, [mean_density[0], 2.0])
-mask_tail = bin_centers >= xmin_tail
-popt_tail, pcov_tail = curve_fit(power_law_dist, bin_centers[mask_tail], mean_density[mask_tail], sigma=std_density[mask_tail], absolute_sigma=True)
+# --- Power Law pura (per confronto) ---
+pl      = fit.power_law
+alpha_pl = pl.alpha
+x_min_pl = pl.xmin
 
-# --- 3. PLOTTING ---
-fig = plt.figure(figsize=(12, 10))
-grid = plt.GridSpec(3, 1, hspace=0.45, wspace=0.3)
+# --- Lognormal (per confronto) ---
+ln       = fit.lognormal
+mu_ln    = ln.mu
+sigma_ln = ln.sigma
 
-# Main Plot (Log-Log)
-ax_main = fig.add_subplot(grid[:2, 0])
 
-# Uncertainty Band
-ax_main.fill_between(bin_centers, mean_density - std_density, mean_density + std_density, color='gray', alpha=0.15, label=r'Uncertainties')
+# ── LIKELIHOOD RATIO TESTS ───────────────────────────────────────────────────
+# R > 0  →  prima distribuzione preferita; p < 0.05 → confronto significativo
+R_tpl_vs_pl,  p_tpl_vs_pl  = fit.distribution_compare('truncated_power_law', 'power_law')
+R_tpl_vs_ln,  p_tpl_vs_ln  = fit.distribution_compare('truncated_power_law', 'lognormal')
 
-# Scatter Plot with the specified style (White edges for visibility)
-ax_main.errorbar(
-    bin_centers, mean_density, yerr=std_density, 
-    fmt='o', color='royalblue', ecolor='gray', elinewidth=0, capsize=0, 
-    markersize=6, markeredgecolor='white', alpha=1, label='Observed Data'
-)
+# ── STAMPA PARAMETRI ─────────────────────────────────────────────────────────
+print("=" * 55)
+print("  RISULTATI DEL FIT")
+print("=" * 55)
+print(f"\n{'--- Truncated Power Law':}")
+print(f"  alpha  (esponente)   : {alpha:.4f}")
+print(f"  Lambda (decay rate)  : {Lambda:.6f}")
+print(f"  x_min                : {x_min}")
 
-# Fit lines (Power Law Tail)
-x_fine_tail = np.geomspace(xmin_tail, bin_centers.max(), 200)
-ax_main.plot(x_fine_tail, power_law_dist(x_fine_tail, *popt_tail), color='tab:red', lw=2, label=r'Power-Law Tail Fit ($\alpha = $' + f'{popt_tail[1]:.2f})')
+print(f"\n{'--- Power Law pura':}")
+print(f"  alpha                : {alpha_pl:.4f}")
+print(f"  x_min                : {x_min_pl}")
 
-# Aesthetics for Main Plot
-ax_main.set_xscale('log')
-ax_main.set_yscale('log')
-ax_main.set_ylabel(r'$P(n_{child})$')
-ax_main.legend(loc='best', frameon=True)
-ax_main.grid(True, which="both", ls="-", alpha=0.2)
+print(f"\n{'--- Lognormal':}")
+print(f"  mu                   : {mu_ln:.4f}")
+print(f"  sigma                : {sigma_ln:.4f}")
 
-# Tail Residuals
-ax_res_tail = fig.add_subplot(grid[2:, 0])
-res_tail = (mean_density[mask_tail] - power_law_dist(bin_centers[mask_tail], *popt_tail)) / std_density[mask_tail]
-ax_res_tail.axhline(0, color='black', lw=1.5, alpha=0.5, ls='--', zorder=0)
-ax_res_tail.scatter(bin_centers[mask_tail], res_tail, color='royalblue', s=40, alpha=1, edgecolor='white', zorder=1)
-ax_res_tail.set_xlabel(r'$n_{child}$')
-ax_res_tail.set_ylabel('Residuals')
-ax_res_tail.grid(True, alpha=0.2)
 
-# Save and Show
-if not os.path.exists('images'): os.makedirs('images')
-plt.tight_layout()
-plt.savefig('images\\dist_meta_child.png', dpi=300, bbox_inches='tight')
-plt.show()
+print(f"\n{'--- Likelihood Ratio Tests (vs Truncated PL)':}")
+print(f"  TPL vs Power Law     : R = {R_tpl_vs_pl:+.3f},  p = {p_tpl_vs_pl:.4f}")
+print(f"  TPL vs Lognormal     : R = {R_tpl_vs_ln:+.3f},  p = {p_tpl_vs_ln:.4f}")
+print("=" * 55)
 
-# Print Fit Results
-print(f"Tail fit: C = {popt_tail[0]:.3e} +- {np.sqrt(pcov_tail[0][0]):.3e}, Alpha = {popt_tail[1]:.3f} +- {np.sqrt(pcov_tail[1][1]):.3f}")
+# ── GRAFICO ──────────────────────────────────────────────────────────────────
+fig = plt.figure(figsize=(13, 5.5))
+gs = gridspec.GridSpec(1, 2, figure=fig, wspace=0.35)
+
+def _style_ax(ax, title):
+    ax.tick_params(labelsize=9)
+    ax.set_title(title, fontsize=11, pad=10)
+    ax.grid(True, linewidth=0.5, linestyle='--', alpha=0.6)
+
+# ── Pannello 1: PDF (log-log) ─────────────────────────────────────────────────
+ax1 = fig.add_subplot(gs[0])
+_style_ax(ax1, 'PDF')
+
+fit.plot_pdf(linewidth=0, marker='o',
+            markersize=4, label='Dati empirici', ax=ax1)
+
+fit.truncated_power_law.plot_pdf(linewidth=2.2,
+                                label=f'Trunc. PL  α={alpha:.2f}, Λ={Lambda:.4f}', ax=ax1)
+fit.power_law.plot_pdf(linewidth=1.6, linestyle='--',
+                        label=f'Power Law  α={alpha_pl:.2f}', ax=ax1)
+fit.lognormal.plot_pdf(linewidth=1.6, linestyle=':',
+                        label=f'Lognormal  μ={mu_ln:.2f} σ={sigma_ln:.2f}', ax=ax1)
+
+ax1.axvline(x_min, color='white', linewidth=1, linestyle=':', alpha=0.5,
+            label=f'x_min = {x_min}')
+ax1.set_xlabel('x')
+ax1.set_ylabel('P(x)')
+legend1 = ax1.legend(fontsize=7.5, framealpha=0.3)
+
+# ── Pannello 2: CCDF (log-log) ────────────────────────────────────────────────
+ax2 = fig.add_subplot(gs[1])
+_style_ax(ax2, 'CCDF')
+
+fit.plot_ccdf(linewidth=0, marker='o',
+            markersize=4, label='Dati empirici', ax=ax2)
+
+fit.truncated_power_law.plot_ccdf(linewidth=2.2,
+                                label='Trunc. PL', ax=ax2)
+fit.power_law.plot_ccdf(linewidth=1.6, linestyle='--',
+                        label='Power Law', ax=ax2)
+fit.lognormal.plot_ccdf(linewidth=1.6, linestyle=':',
+                        label='Lognormal', ax=ax2)
+
+ax2.axvline(x_min, color='white', linewidth=1, linestyle=':', alpha=0.5,
+            label=f'x_min = {x_min}')
+ax2.set_xlabel('x')
+ax2.set_ylabel('P(X ≥ x)')
+ax2.legend(fontsize=7.5, framealpha=0.3)
+
+# Salvataggio
+fig.savefig('images\\dist_meta_child.png', dpi=300)
