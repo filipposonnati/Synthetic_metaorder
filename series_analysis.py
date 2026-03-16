@@ -1,20 +1,13 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from scipy.optimize import curve_fit
 from statsmodels.tsa.stattools import acf
 import powerlaw
-from series_creation import generate_ffm, generate_arfima
-
-import matplotlib.gridspec as gridspec
-
-def linear_func(x, slope, intercept):
-    """
-    Standard linear function y = slope * x + intercept.
-    Used for fitting in log-log space, where power-law relationships
-    F ~ x^alpha become straight lines: log F = alpha * log x + const.
-    """
-    return intercept + slope * x
+from collections import Counter
+from fbm import fgn
+from series_creation import generate_ffm, generate_arfima, generate_fgn
 
 def compute_runs(sign_series):
     """
@@ -45,7 +38,7 @@ def compute_runs(sign_series):
 
     return run_lengths
 
-def fit_plot(runs, min = False):
+def dist_plot(runs, filename, min = False):
     # ── FIT ──────────────────────────────────────────────────────────────────────
     if min:
         fit = powerlaw.Fit(runs, discrete=True)
@@ -110,15 +103,14 @@ def fit_plot(runs, min = False):
     ax1 = fig.add_subplot(gs[0])
     _style_ax(ax1, 'PDF')
 
-    fit.plot_pdf(linewidth=0, marker='o',
-                markersize=4, label='Dati empirici', ax=ax1)
+    fit.plot_pdf(linewidth=0, marker='o', markersize=4, label='Empirical Data', ax=ax1, linear_bins=False)
 
     fit.truncated_power_law.plot_pdf(linewidth=2.2,
-                                    label=f'Trunc. PL  α={alpha:.2f}, Λ={Lambda:.4f}', ax=ax1)
+                                    label=f'Trunc. PL  α={alpha:.3f}, Λ={Lambda:.3f}', ax=ax1)
     fit.power_law.plot_pdf(linewidth=1.6, linestyle='--',
-                            label=f'Power Law  α={alpha_pl:.2f}', ax=ax1)
+                            label=f'Power Law  α={alpha_pl:.3f}', ax=ax1)
     fit.lognormal.plot_pdf(linewidth=1.6, linestyle=':',
-                            label=f'Lognormal  μ={mu_ln:.2f} σ={sigma_ln:.2f}', ax=ax1)
+                            label=f'Lognormal  μ={mu_ln:.3f} σ={sigma_ln:.3f}', ax=ax1)
 
     ax1.axvline(x_min, color='white', linewidth=1, linestyle=':', alpha=0.5,
                 label=f'x_min = {x_min}')
@@ -131,7 +123,7 @@ def fit_plot(runs, min = False):
     _style_ax(ax2, 'CCDF')
 
     fit.plot_ccdf(linewidth=0, marker='o',
-                markersize=4, label='Dati empirici', ax=ax2)
+                markersize=4, label='Empirical Data', ax=ax2)
 
     fit.truncated_power_law.plot_ccdf(linewidth=2.2,
                                     label='Trunc. PL', ax=ax2)
@@ -158,23 +150,32 @@ def fit_plot(runs, min = False):
     """
 
     if min:
-        plt.savefig(f'images\\series\\powerlaw_fit_{gamma}_min.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.savefig(f'images\\{filename}_min.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
     else:
-        plt.savefig(f'images\\series\\powerlaw_fit_{gamma}.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.savefig(f'images\\{filename}.png', dpi=160, bbox_inches='tight', facecolor=fig.get_facecolor())
 
 if __name__ == "__main__":
-    n = 100000000
-    gamma = 0.6
+    n = 100_000_000
+    gamma = 0.3
     print(f'Processing gamma = {gamma:.2f}')
+
+    d = 0.5 - 0.5 * gamma
+    H = d + 0.5
 
     # Series generation
     # Generate a continuous long-memory series via FFM, then binarize by sign
-    d = 0.5 - 0.5 * gamma
-    series = generate_ffm(n, d)
+    #series = generate_ffm(n, gamma)
+    #series = generate_arfima(n, d)
+    series = generate_fgn(n, H)
+
+    #standard library approach
+    #series = fgn(n=1_000_000, hurst=H, length=1, method='daviesharte')
+
     sign_series = np.where(series >= 0, 1, -1)
 
     # Compute run lengths of the binary series
     runs = compute_runs(sign_series)
 
-    fit_plot(runs)
-    fit_plot(runs, min = True)
+    dist_plot(runs, f'series_analysis_fgn\\powerlaw_fit_{gamma}')
+    dist_plot(runs, f'series_analysis_fgn\\powerlaw_fit_{gamma}', min = True)
+    #fit_plot_manual(runs, f'series\\powerlaw_fit_{gamma}_manual')

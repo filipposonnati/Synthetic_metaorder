@@ -19,7 +19,7 @@ plt.rcParams.update({
 
 # --- Configuration ---
 data_dir = 'database\\data'
-iterations = 10
+iterations = 50
 nb_traders = 20
 kind = 'power'
 exponent = 2.0
