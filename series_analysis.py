@@ -166,16 +166,16 @@ if __name__ == "__main__":
     # Generate a continuous long-memory series via FFM, then binarize by sign
     #series = generate_ffm(n, gamma)
     #series = generate_arfima(n, d)
-    series = generate_fgn(n, H)
+    #series = generate_fgn(n, H)
 
     #standard library approach
-    #series = fgn(n=1_000_000, hurst=H, length=1, method='daviesharte')
+    series = fgn(n=1_000_000, hurst=H, length=1, method='daviesharte')
 
     sign_series = np.where(series >= 0, 1, -1)
 
     # Compute run lengths of the binary series
     runs = compute_runs(sign_series)
 
-    dist_plot(runs, f'series_analysis_fgn\\powerlaw_fit_{gamma}')
-    dist_plot(runs, f'series_analysis_fgn\\powerlaw_fit_{gamma}', min = True)
+    dist_plot(runs, f'series_analysis_fgn_lib\\powerlaw_fit_{gamma}')
+    dist_plot(runs, f'series_analysis_fgn_lib\\powerlaw_fit_{gamma}', min = True)
     #fit_plot_manual(runs, f'series\\powerlaw_fit_{gamma}_manual')
