@@ -86,7 +86,7 @@ fig, axes = plt.subplots(1, 2, figsize=(18, 6))
 ax = axes[0]
 for i, daily_corr in enumerate(all_daily_corrs[:5]):
     ax.plot(np.arange(1, max_lag + 1), daily_corr[1:],
-            alpha=0.8, linewidth=1.0, label=f'Day {i+1}')
+            alpha=1.0, linewidth=1.0, label=f'Day {i+1}')
 ax.set_xscale('log')
 ax.set_yscale('log')
 ax.set_xlabel('Lag')
@@ -100,21 +100,17 @@ ax = axes[1]
 ax.fill_between(lags,
                 pooled_vals - err_vals,
                 pooled_vals + err_vals,
-                color='steelblue', alpha=0.35, label='SEM')
+                color='steelblue', alpha=0.30, label='SEM')
 
-ax.plot(lags, pooled_vals, color='steelblue', linewidth=1.5, label='Pooled ACF')
+ax.plot(lags, pooled_vals, color='steelblue', linewidth=1.0, label='Pooled ACF')
 
 ax.plot(fit_range_early, power_law(fit_range_early, *popt_early),
         color='tomato', linewidth=2, linestyle='--',
-        label=(f'Fit lag 1-20:\n'
-               f'  A={popt_early[0]:.3f}±{perr_early[0]:.3f}\n'
-               f'  δ={popt_early[1]:.3f}±{perr_early[1]:.3f}'))
+        label=(f'Fit lag 1-20'))
 
 ax.plot(fit_range_late, power_law(fit_range_late, *popt_late),
         color='darkorange', linewidth=2, linestyle='--',
-        label=(f'Fit lag 21-{max_lag}:\n'
-               f'  A={popt_late[0]:.3f}±{perr_late[0]:.3f}\n'
-               f'  δ={popt_late[1]:.3f}±{perr_late[1]:.3f}'))
+        label=(f'Fit lag 21-{max_lag}'))
 
 ax.set_xscale('log')
 ax.set_yscale('log')

@@ -80,7 +80,7 @@ for i, count in enumerate(unique_children):
             # Plot fits on both Main and Inset
             x_fit = np.logspace(np.log10(xm_t.min()), np.log10(xm_t.max()*1.15), 100)
             y_fit = power_law(x_fit, *popt)
-            ax2.plot(x_fit, y_fit, color=color, linestyle='--', alpha=1.0, linewidth=1.0)
+            #ax2.plot(x_fit, y_fit, color=color, linestyle='--', alpha=1.0, linewidth=1.0)
             ax_ins.plot(x_fit, y_fit, color=color, linestyle='--', alpha=1.0, linewidth=1.0)
             
             table_results.append({'Children': count, 'alpha': alpha_curr, 'err': np.sqrt(pcov[1,1])})
