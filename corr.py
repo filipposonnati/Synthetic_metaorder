@@ -86,7 +86,7 @@ fig, axes = plt.subplots(1, 2, figsize=(18, 6))
 ax = axes[0]
 for i, daily_corr in enumerate(all_daily_corrs[:5]):
     ax.plot(np.arange(1, max_lag + 1), daily_corr[1:],
-            alpha=0.6, linewidth=0.8, label=f'Day {i+1}')
+            alpha=0.8, linewidth=1.0, label=f'Day {i+1}')
 ax.set_xscale('log')
 ax.set_yscale('log')
 ax.set_xlabel('Lag')

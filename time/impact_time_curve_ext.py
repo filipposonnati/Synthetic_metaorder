@@ -74,7 +74,7 @@ def save(index_time):
             post_trades['Ratio'] = post_impact / np.sqrt(meta_volume) 
 
             file_exists = os.path.isfile(f'..\\database\\post_trades\\20_power_2.0_{index_time}.csv')
-            post_trades[['NormalizedTime', 'Ratio']].to_csv(f'database\\post_trades\\20_power_2.0_{index_time}.csv', mode='a', index=False, header=not file_exists)
+            post_trades[['NormalizedTime', 'Ratio']].to_csv(f'..\\database\\post_trades\\20_power_2.0_{index_time}.csv', mode='a', index=False, header=not file_exists)
 
 length = 2
 
