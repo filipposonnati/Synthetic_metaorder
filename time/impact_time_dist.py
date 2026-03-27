@@ -16,7 +16,7 @@ path = 'meta_20_power_2.0.csv'
 
 print(path)
 
-dir = 'database\\meta'
+dir = '..\\database\\meta'
 
 print(dir)
 
@@ -91,5 +91,5 @@ ax1.legend()
 
 plt.tight_layout()
 
-plt.savefig(f'images\\{image_name}.png')
+plt.savefig(f'..\\images\\{image_name}.png')
 plt.show()

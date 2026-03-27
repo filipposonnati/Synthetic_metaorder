@@ -11,7 +11,7 @@ from pathlib import Path
 
 paths = np.array(listdir('database\\data'))
 
-nb_traders = 20
+nb_traders = 4
 kind = 'power'
 exponent = 2.0
 

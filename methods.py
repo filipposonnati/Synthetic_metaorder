@@ -87,6 +87,9 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
     
     # Calcola l'impatto parziale come differenza tra il prezzo di fine trade corrente e il prezzo iniziale del metaordine
     sorted_trades['PartialImpact'] = (sorted_trades['EndMid'] - start_prices) * sorted_trades['sign']
+
+    sorted_trades['PartialImpact_pre'] = (sorted_trades['BeginMid'] - start_prices) * sorted_trades['sign']
+
     # Volume traded by the trader until a certain point
     sorted_trades['PartialVolume'] = sorted_trades.groupby('metaid')['Volume'].cumsum()
 
@@ -102,15 +105,24 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
         'DailyVolume': 'first'
     }).reset_index()
 
-    volumes = sorted_trades.groupby('metaid')['PartialVolume'].transform('last')
-
     # Number of children
     sorted_trades['NbChild'] = sorted_trades.groupby('metaid')['trader'].transform('count')
 
     # Volume of the entire metaorder
     sorted_trades['MetaVolume'] = sorted_trades.groupby('metaid')['PartialVolume'].transform('last')
 
-    sorted_trades['Ratio'] = sorted_trades['PartialImpact'] / np.sqrt(volumes)
+    begintime = sorted_trades.groupby('metaid')['BeginTime'].transform('first')
+    endtime = sorted_trades.groupby('metaid')['EndTime'].transform('last')
+
+    # Metaorder duration using metaorder start and end time
+    sorted_trades['MetaDuration'] = (endtime - begintime).dt.total_seconds()
+
+    # Partial time using trade start time and metaorder start time
+    sorted_trades['ElapsedTime'] = (sorted_trades['BeginTime'] - begintime).dt.total_seconds()
+
+    sorted_trades['Ratio'] = sorted_trades['PartialImpact'] / np.sqrt(sorted_trades['MetaVolume'])
+
+    sorted_trades['Ratio_pre'] = sorted_trades['PartialImpact_pre'] / np.sqrt(sorted_trades['MetaVolume'])
 
     sorted_trades.drop(columns=['EndTime', 'day', 'trader'], inplace=True)
 
