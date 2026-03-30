@@ -28,6 +28,9 @@ for i in range(n_to_plot):
     mask = (df['NormalizedTime'] >= t_start) & (df['NormalizedTime'] < t_end)
     bin_data = df.loc[mask, 'Ratio'].dropna()
     
+    lo, hi = bin_data.quantile(0.05), bin_data.quantile(0.95)
+    bin_data = bin_data[(bin_data >= lo) & (bin_data <= hi)]
+
     label = f'{i} [{t_start:.1e}, {t_end:.1e}]'
     mean_val = bin_data.mean()
     
@@ -69,14 +72,17 @@ for i in range(len(bin_edges)-1):
     data = df.loc[mask, 'Ratio'].dropna()
     
     if not data.empty:
+        lo, hi = data.quantile(0.05), data.quantile(0.95)
+        trimmed = data[(data >= lo) & (data <= hi)]
+
         stats_list.append({
             'time': t_mid,
-            'mean': data.mean(),
-            'median': data.median(),
-            'std': data.std(),
-            'skew': skew(data),
-            'kurt': kurtosis(data),
-            'count': len(data)
+            'mean': trimmed.mean(),
+            'median': trimmed.median(),
+            'std': trimmed.std(),
+            'skew': skew(trimmed),
+            'kurt': kurtosis(trimmed),
+            'count': len(trimmed)
         })
 
 df_stats = pd.DataFrame(stats_list)

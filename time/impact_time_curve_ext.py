@@ -6,20 +6,15 @@ import os
 from scipy.optimize import curve_fit
 import re
 
-def post_impact(x, a, beta):
+def post_impact_model(x, a, beta):
     return a * (x**(1 - beta) - (x - 1)**(1 - beta))
 
 def der_post_impact(x, a, beta):
     return a * (1 - beta) * (x**(-beta) - (x - 1)**(-beta))
 
-plt.rcParams.update({
-    'font.size': 12,          # Dimensione base per tutto il testo
-    'axes.titlesize': 20,     # Titolo
-    'axes.labelsize': 16,     # Etichette assi
-    'xtick.labelsize': 12,    # Numeri asse X
-    'ytick.labelsize': 12,    # Numeri asse Y
-    'legend.fontsize': 14     # Legenda
-})
+def sqrt_law(Q, Y):
+    """Power law with delta fixed to 0.5: I(Q) = Y * sqrt(Q)"""
+    return Y * np.sqrt(Q)
 
 def save(index_time):
     paths = np.array(listdir('..\\database\\trades_20_power_2.0'))
@@ -27,196 +22,232 @@ def save(index_time):
     for path in paths:
         print(path)
         trades = pd.read_csv(
-            f'..\\database\\trades_20_power_2.0\\{path}', 
+            f'..\\database\\trades_20_power_2.0\\{path}',
             sep=',',
             parse_dates=['BeginTime']
         )
 
         meta = pd.read_csv(
-            f'..\\database\\meta_20_power_2.0\\meta{path[6:]}', 
+            f'..\\database\\meta_20_power_2.0\\meta{path[6:]}',
             sep=',',
             parse_dates=['BeginTime', 'EndTime']
         )
 
-        meta = meta[meta['NbChild'] >= 5]
+        meta = meta[meta['NbChild'] > 1]
 
         for index, meta_row in meta.iterrows():
-            meta_id = index # Usiamo l'indice come ID del metaordine per semplicità
-            t_begin_meta = meta_row['BeginTime']
-            t_end_meta = meta_row['EndTime']
+            t_begin_meta  = meta_row['BeginTime']
+            t_end_meta    = meta_row['EndTime']
             meta_duration = t_end_meta - t_begin_meta
-            meta_sign = meta_row['sign']
-            meta_impact = meta_row['MetaImpact']
-            meta_volume = meta_row['MetaVolume']
-            
-            # 3.1. Calcola l'intervallo di tempo post-metaordine (T_End_Meta, T_End_Meta + MetaDuration)
-            end_window = t_end_meta + meta_duration * index_time
-            t_start_window = t_end_meta + meta_duration * (index_time - 1)
-            
-            # 3.2. Filtra i trade nell'intervallo post-metaordine: 
+            meta_sign     = meta_row['sign']
+            meta_volume   = meta_row['MetaVolume']
+
+            # window [index_time, index_time+1] * meta_duration after t_end
+            t_start_window = t_begin_meta + meta_duration * index_time
+            t_end_window   = t_begin_meta + meta_duration * (index_time + 1)
+
             post_trades = trades[
-                (trades['BeginTime'] >= t_start_window) & 
-                (trades['BeginTime'] < end_window)
+                (trades['BeginTime'] >= t_start_window) &
+                (trades['BeginTime'] <  t_end_window)
             ].copy()
-            
-            # Calcolo dell'Impatto Cumulativo Normalizzato
-            begin_meta_price = meta_row['BeginMid']
-            #post_impact = (post_trades['EndMid'] - begin_meta_price) * meta_sign
-            post_impact = (post_trades['BeginMid'] - begin_meta_price) * meta_sign
-            
-            # Calcolo del Time Lag Normalizzato per OGNI trade nella finestra
-            # t_exec_trade - t_end_meta (in secondi)
+
+            if post_trades.empty:
+                continue
+
+            impact = (post_trades['BeginMid'] - meta_row['BeginMid']) * meta_sign
+
             time_lag_seconds = (post_trades['BeginTime'] - t_begin_meta).dt.total_seconds()
-            
-            normalized_time_lag = time_lag_seconds / meta_duration.total_seconds()
+            normalized_time  = time_lag_seconds / meta_duration.total_seconds()
 
-            post_trades['NormalizedTime'] = normalized_time_lag
-            post_trades['Ratio'] = post_impact / np.sqrt(meta_volume) 
+            post_trades['NormalizedTime'] = normalized_time.values
+            post_trades['Impact']         = impact.values
+            post_trades['MetaVolume']     = meta_volume
 
-            file_exists = os.path.isfile(f'..\\database\\post_trades\\20_power_2.0_{index_time}.csv')
-            post_trades[['NormalizedTime', 'Ratio']].to_csv(f'..\\database\\post_trades\\20_power_2.0_{index_time}.csv', mode='a', index=False, header=not file_exists)
+            file_path   = f'..\\database\\{dir}\\20_power_2.0_{index_time}.csv'
+            file_exists = os.path.isfile(file_path)
+            post_trades[['NormalizedTime', 'Impact', 'MetaVolume']].to_csv(
+                file_path, mode='a', index=False, header=not file_exists
+            )
 
-length = 2
+# ── plotting config ──────────────────────────────────────────────────────────
+plt.rcParams.update({
+    'font.size':       12,
+    'axes.titlesize':  20,
+    'axes.labelsize':  16,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 14,
+})
 
+dir    = 'post_trades'
+length = 2       # number of meta_duration windows after execution end
+n_time_bins = 40 # fine time bins per window
+
+# ── ensure CSVs exist ────────────────────────────────────────────────────────
 for index_time in range(length):
-    if not os.path.exists(f'..\\database\\post_trades\\20_power_2.0_{index_time}.csv'):
+    if not os.path.exists(f'..\\database\\{dir}\\20_power_2.0_{index_time}.csv'):
         save(index_time)
 
-bins_analysis = np.array([])
-times_analysis = np.array([])
+# ── per-window: subdivide into fine time bins, fit Y in each ─────────────────
+Y_values     = []
+Y_err_values = []
+t_centers    = []
 
-bins_analysis_err = np.array([])
-times_analysis_err = np.array([])
+paths = np.array(listdir(f'..\\database\\{dir}'))
 
-paths = np.array(listdir('..\\database\\post_trades'))
-
-for path in paths[:length]:
+for path in sorted(paths[:length]):
     print(path)
-    post_trades = pd.read_csv(
-        f'..\\database\\post_trades\\{path}', 
-        sep=','
-    )
+    post_trades = pd.read_csv(f'..\\database\\{dir}\\{path}', sep=',')
 
     match = re.search(r"_(\d+)\.csv$", path)
-
     index = int(match.group(1))
 
-    if index == 0:
-        # Bin con distribuzione a potenza (esponente 2): fitti vicino a 0, radi verso 1
-        n_bins = 30
-        bins = np.linspace(0.0, 1.0, n_bins + 1) ** 3  # bordi in [0, 1]
-    else:
-        bins = np.linspace(0.0 + index, 1.0 + index, 11)
+    # normalized time for this file runs in [1+index, 2+index]
+    t_lo = index
+    t_hi = 1.0 + index
+    time_bins = np.linspace(t_lo, t_hi, n_time_bins + 1)
 
-    post_trades['bin'] = pd.cut(post_trades['NormalizedTime'], bins=bins, include_lowest=True) 
+    post_trades['time_bin'] = pd.cut(
+        post_trades['NormalizedTime'], bins=time_bins, include_lowest=True
+    )
 
-    grouped = post_trades.groupby('bin', observed=True).agg({
-        'NormalizedTime': ['mean', 'std'],
-        'Ratio': ['mean', 'std', 'count']
-    })
+    for tb, group in post_trades.groupby('time_bin', observed=True):
+        print(tb)
+        if len(group) < 10:   # skip bins with too few points for a reliable fit
+            continue
 
-    grouped.columns = ['NormalizedTime_mean', 'NormalizedTime_std', 'Ratio_mean', 'Ratio_std', 'count']
+        t_mid = (tb.left + tb.right) / 2.0
 
-    x = grouped['NormalizedTime_mean'].to_numpy()
-    y = grouped['Ratio_mean'].to_numpy()
+        # ── log bins over MetaVolume ─────────────────────────────────────────
+        min_vol = group['MetaVolume'].min()
+        max_vol = group['MetaVolume'].max()
+        if min_vol <= 0 or min_vol == max_vol:
+            continue
 
-    bins_analysis = np.concatenate((bins_analysis, y))
-    times_analysis = np.concatenate((times_analysis, x))
+        bins_vol = np.logspace(np.log10(min_vol), np.log10(max_vol), 51)
+        group = group.copy()
+        group['vol_bin'] = pd.cut(group['MetaVolume'], bins=bins_vol, include_lowest=True)
 
-    x_err = grouped['NormalizedTime_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
-    y_err = grouped['Ratio_std'].to_numpy() / np.sqrt(grouped['count'].to_numpy())
+        vol_grouped = group.groupby('vol_bin', observed=True).agg(
+            Q_mean  =('MetaVolume', 'mean'),
+            I_mean  =('Impact',     'mean'),
+            I_std   =('Impact',     'std'),
+            count   =('Impact',     'count'),
+        ).dropna()
 
-    bins_analysis_err = np.concatenate((bins_analysis_err, y_err))
-    times_analysis_err = np.concatenate((times_analysis_err, x_err))
+        vol_grouped = vol_grouped[vol_grouped['count'] >= 3]
+        if len(vol_grouped) < 3:
+            continue
 
-mask = times_analysis > 1.0
+        Q     = vol_grouped['Q_mean'].to_numpy()
+        I     = vol_grouped['I_mean'].to_numpy()
+        I_err = vol_grouped['I_std'].to_numpy() / np.sqrt(vol_grouped['count'].to_numpy())
 
-popt, pcov = curve_fit(post_impact, times_analysis[mask], bins_analysis[mask])
+        # ── fit ────────────────────────────────────
+        try:
+            h = np.histogram(group['MetaVolume'], bins=bins_vol)
+            max_h = np.max(h[0])
 
-Y = popt[0]
-beta = popt[1]
+            mask = np.where(h[0] > max_h * 0.5)
 
-Y_err = np.sqrt(pcov[0][0])
+            popt, pcov = curve_fit(
+                sqrt_law, Q[mask], I[mask],
+                sigma=I_err[mask], absolute_sigma=True,
+                p0=[1.0]
+            )
+            Y     = popt[0]
+            Y_err = np.sqrt(pcov[0][0])
+        except RuntimeError:
+            print(f'  Fit failed for time bin [{tb.left:.2f}, {tb.right:.2f}], skipping.')
+            continue
+
+        mask = np.where(I > 0.0)
+        Q = Q[mask]
+        I = I[mask]
+
+        print(Y)
+
+        x = np.geomspace(min_vol, max_vol, 51)
+        y = Y * np.sqrt(x)
+
+        fig, ax1 = plt.subplots()
+ 
+        ax1.plot(Q, I, marker='o', color='C0', label=r'$I(Q)$')
+        ax1.plot(x, y, marker='', color='C0', label=r'sqrt')
+        ax1.set_xscale('log')
+        ax1.set_yscale('log')
+        ax1.set_xlabel(r'$Q$')
+        ax1.set_ylabel(r'$I(Q)$')
+        ax1.tick_params(axis='y')
+ 
+        ax2 = ax1.twinx()
+        ax2.hist(group['MetaVolume'], bins=bins_vol, alpha=0.4, label='counts')
+        ax2.set_xscale('log')
+        ax2.set_ylabel('counts')
+        ax2.tick_params(axis='y')
+ 
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2)
+ 
+        plt.tight_layout()
+        plt.pause(0.00001)
+        plt.close()
+
+        t_centers.append(t_mid)
+        Y_values.append(Y)
+        Y_err_values.append(Y_err)
+
+t_centers    = np.array(t_centers)
+Y_values     = np.array(Y_values)
+Y_err_values = np.array(Y_err_values)
+
+print(f'\nTotal points collected: {len(t_centers)}')
+
+# ── restrict to t > 1.0 for the decay fit ────────────────────────────────────
+fit_mask     = t_centers > 1.0
+t_fit        = t_centers[fit_mask]
+Y_fit        = Y_values[fit_mask]
+Y_err_fit    = Y_err_values[fit_mask]
+
+print(f'Points used for decay fit (t > 1.0): {len(t_fit)}')
+
+# ── fit post-impact decay to Y(t) ────────────────────────────────────────────
+# iterative effective-error fit
+popt, pcov = curve_fit(
+    post_impact_model, t_fit, Y_fit,
+    sigma=Y_err_fit, absolute_sigma=True,
+    p0=[Y_fit[0], 0.5]
+)
+a_fit, beta_fit = popt
+
+for _ in range(10):
+    eff_err = Y_err_fit  # only y-errors here; x-errors negligible within a bin
+    popt, pcov = curve_fit(
+        post_impact_model, t_fit, Y_fit,
+        sigma=eff_err, absolute_sigma=True,
+        p0=popt
+    )
+    a_fit, beta_fit = popt
+
+a_err    = np.sqrt(pcov[0][0])
 beta_err = np.sqrt(pcov[1][1])
+print(f'Post-impact fit: a = {a_fit:.4f} ± {a_err:.4f},  beta = {beta_fit:.4f} ± {beta_err:.4f}')
 
-print(f'Fit (no err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
+x_th = np.linspace(t_fit.min(), t_centers.max(), 300)
+plt.plot(x_th, post_impact_model(x_th, a_fit, beta_fit),
+            linestyle=':', color='black',
+            label=rf'fit: $\beta={beta_fit:.3f} \pm {beta_err:.3f}$')
 
-popt, pcov = curve_fit(post_impact, times_analysis[mask], bins_analysis[mask], sigma=bins_analysis_err[mask], absolute_sigma=True)
-
-Y = popt[0]
-beta = popt[1]
-
-Y_err = np.sqrt(pcov[0][0])
-beta_err = np.sqrt(pcov[1][1])
-
-print(f'Fit (y err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
-
-for i in range(10):
-    err = np.sqrt(bins_analysis_err**2 + (times_analysis_err * der_post_impact(times_analysis, Y, beta))**2)
-
-    popt, pcov = curve_fit(post_impact, times_analysis[mask], bins_analysis[mask], sigma=err[mask], absolute_sigma=True)
-
-    Y = popt[0]
-    beta = popt[1]
-
-    Y_err = np.sqrt(pcov[0][0])
-    beta_err = np.sqrt(pcov[1][1])
-
-print(f'Fit (eff err): Y = {Y} +- {Y_err}, beta = {beta} +- {beta_err}')
-
-x_theoretical = np.linspace(1.0, length, 100)
-plt.plot(x_theoretical, post_impact(x_theoretical, Y, beta), linestyle=':', color = "black")
-
-#plt.errorbar(x, y, yerr=y_err, xerr=x_err, linestyle="", marker=".", label = f"20_power_2.0")
-plt.plot(times_analysis, bins_analysis, linestyle="", marker="o", color='C0')
+# ── plot ──────────────────────────────────────────────────────────────────────
+plt.errorbar(t_centers, Y_values, yerr=Y_err_values,
+             linestyle='', marker='o', color='C0', label=r'$Y(t/T)$')
 
 plt.xlabel(r'$t / T$')
-plt.ylabel(r'$I(t) / \sqrt{Q}$')
-#plt.legend()
-plt.grid(True, which="both", ls="-")
-
-plt.savefig('..\\images\\impact_time_curve_ext.png')
-plt.show()
-
-# --- Distribuzione dei Ratio nel primo bin (t/T più vicino a 0) ---
-post_trades_0 = pd.read_csv(
-    f'..\\database\\post_trades\\20_power_2.0_0.csv',
-    sep=','
-)
-
-n_bins_0 = 30
-bins_0 = np.linspace(0.0, 1.0, n_bins_0 + 1) ** 3
-first_bin_mask = (post_trades_0['NormalizedTime'] >= bins_0[0]) & (post_trades_0['NormalizedTime'] <= bins_0[1])
-first_bin_data = post_trades_0.loc[first_bin_mask, 'Ratio']
-
-print(f"\nPrimo bin: [{bins_0[0]:.5f}, {bins_0[1]:.5f}]")
-print(f"  Count : {len(first_bin_data)}")
-print(f"  Mean  : {first_bin_data.mean():.4f}")
-print(f"  Median: {first_bin_data.median():.4f}")
-print(f"  Std   : {first_bin_data.std():.4f}")
-
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-# Istogramma
-axes[0].hist(first_bin_data, bins=50, color='C0', edgecolor='white', linewidth=0.4)
-axes[0].axvline(first_bin_data.mean(),   color='red',    linestyle='--', label=f'Mean = {first_bin_data.mean():.3f}')
-axes[0].axvline(first_bin_data.median(), color='orange', linestyle='--', label=f'Median = {first_bin_data.median():.3f}')
-axes[0].set_xlabel(r'$I(t) / \sqrt{Q}$')
-axes[0].set_ylabel('Count')
-axes[0].set_title(f'First bin  $[{bins_0[0]:.4f},\\ {bins_0[1]:.4f}]$')
-axes[0].legend()
-axes[0].grid(True, ls='-')
-
-# Log-scale per vedere le code
-axes[1].hist(first_bin_data, bins=50, color='C0', edgecolor='white', linewidth=0.4, log=True)
-axes[1].axvline(first_bin_data.mean(),   color='red',    linestyle='--', label=f'Mean = {first_bin_data.mean():.3f}')
-axes[1].axvline(first_bin_data.median(), color='orange', linestyle='--', label=f'Median = {first_bin_data.median():.3f}')
-axes[1].set_xlabel(r'$I(t) / \sqrt{Q}$')
-axes[1].set_ylabel('Count (log scale)')
-axes[1].set_title(f'First bin  $[{bins_0[0]:.4f},\\ {bins_0[1]:.4f}]$  — log scale')
-axes[1].legend()
-axes[1].grid(True, ls='-')
-
+plt.ylabel(r'$I / \sqrt{Q}$)')
+plt.legend()
+plt.grid(True, which='both', ls='-')
 plt.tight_layout()
-plt.savefig('..\\images\\first_bin_distribution.png')
+
+plt.savefig('..\\images\\impact_time_curve_ext_v3.png')
 plt.show()
