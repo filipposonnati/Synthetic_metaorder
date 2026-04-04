@@ -16,7 +16,7 @@ plt.rcParams.update({
     'legend.fontsize': 14     # Legenda
 })
 
-model = "arfima_10"
+model = ""
 
 dir = 'database\\meta'
 if model != "":
@@ -79,16 +79,16 @@ for path in paths:
     #print(f'path: {path}')
 
     if(path[8:13] == "power"):
-        plt.plot(x, y, linestyle="-", marker=".", label = f"{path[5:17]}")
+        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:17]}")
         #print(f"{path[5:17]}")
     elif(path[7:12] == "power"):
-        plt.plot(x, y, linestyle="-", marker=".", label = f"{path[5:16]}")
+        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:16]}")
         #print(f"{path[5:16]}")
     elif path[8:15] == "uniform":
-        plt.plot(x, y, linestyle="-", marker=".", label = f"{path[5:15]}")
+        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:15]}")
         #print(f"{path[5:15]}")
     elif path[7:14] == "uniform":
-        plt.plot(x, y, linestyle="-", marker=".", label = f"{path[5:14]}")
+        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:14]}")
         #print(f"{path[5:14]}")
 
 x_theoretical = np.linspace(1e-6, 1e-3, 2)

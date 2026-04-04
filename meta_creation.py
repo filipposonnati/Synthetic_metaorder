@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = "arfima_10"
+model = ""
 
 data_dir = 'database\\data'
 
@@ -40,15 +40,13 @@ for index, configuration in configurations.iterrows():
     if os.path.exists(f'{meta_dir}\\' + filename):
         os.remove(f'{meta_dir}\\' + filename)
 
-    columns = ["metaid","sign","BeginMid","EndMid","NbChild","BeginTime","EndTime","MetaVolume","TradedVolume","DailyVolume","MetaImpact","Ratio"]
-    pd.DataFrame(columns=columns).to_csv(f'{meta_dir}\\' + filename, index=False)
-
     l = 0
+    first = True
 
     for path in paths:
         print(path)
         meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
-
         l += len(meta)
 
-        meta.to_csv(f'{meta_dir}\\' + filename, mode='a', index=False, header=False)
+        meta.to_csv(f'{meta_dir}\\' + filename, mode='a', index=False, header=first)
+        first = False

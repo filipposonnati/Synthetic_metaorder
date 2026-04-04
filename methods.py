@@ -35,9 +35,7 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
 
     trades['day'] = trades['timestamp'].dt.date
 
-    trades.sort_values('timestamp')
-
-    trades['TradedVolume'] = trades['quantity'].cumsum()
+    trades.sort_values('timestamp', inplace = True)
     
     # Calculate daily volatility and volume
     daily_stats = trades.groupby('day').agg(
@@ -53,6 +51,8 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
     trades.drop(trades.tail(1).index, inplace = True)
 
     trades['Volume'] = trades['quantity'] / trades['DailyVolume']
+
+    trades['TradedVolume'] = trades['Volume'].cumsum()
 
     trades.drop(columns=['price', 'quantity', 'DailySigma'], inplace=True)
 
@@ -82,8 +82,6 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
 
     # Identifica il prezzo iniziale (BeginMid) del PRIMO trade per ogni metaordine
     start_prices = sorted_trades.groupby('metaid')['BeginMid'].transform('first')
- 
-    sorted_trades = sorted_trades.dropna()
     
     # Calcola l'impatto parziale come differenza tra il prezzo di fine trade corrente e il prezzo iniziale del metaordine
     sorted_trades['PartialImpact'] = (sorted_trades['EndMid'] - start_prices) * sorted_trades['sign']
@@ -93,11 +91,13 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
     # Volume traded by the trader until a certain point
     sorted_trades['PartialVolume'] = sorted_trades.groupby('metaid')['Volume'].cumsum()
 
+    # CHANGE 1: 'trader':'first' instead of 'trader':'count' so the trader label is
+    # preserved in metaorders_agg. NbChild is now computed separately below.
     metaorders_agg = sorted_trades.groupby('metaid').agg({
         'sign':'first', 
         'BeginMid':'first', 
         'EndMid':'last',
-        'trader':'count', 
+        'trader':'first',       # <-- was 'count': now saves the trader label
         'BeginTime':'first', 
         'EndTime':'last',
         'Volume':'sum',
@@ -105,7 +105,12 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
         'DailyVolume': 'first'
     }).reset_index()
 
-    # Number of children
+    # CHANGE 2: NbChild for metaorders_agg is now computed via .size() and merged in,
+    # since 'trader':'count' was removed from the agg above.
+    nb_child = sorted_trades.groupby('metaid').size().reset_index(name='NbChild')
+    metaorders_agg = metaorders_agg.merge(nb_child, on='metaid')
+
+    # Number of children (unchanged — still computed on sorted_trades)
     sorted_trades['NbChild'] = sorted_trades.groupby('metaid')['trader'].transform('count')
 
     # Volume of the entire metaorder
@@ -124,44 +129,49 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
 
     sorted_trades['Ratio_pre'] = sorted_trades['PartialImpact_pre'] / np.sqrt(sorted_trades['MetaVolume'])
 
-    sorted_trades.drop(columns=['EndTime', 'day', 'trader'], inplace=True)
+    # CHANGE 3: 'trader' removed from the drop list so it is kept in sorted_trades.
+    sorted_trades.drop(columns=['EndTime', 'day'], inplace=True)
 
     metaorders_agg['MetaImpact'] = (metaorders_agg['EndMid'] - metaorders_agg['BeginMid']) * metaorders_agg['sign']
 
+    # CHANGE 4: 'trader':'NbChild' removed from rename because 'trader' now holds the
+    # label and NbChild already exists as its own column.
     metaorders_agg = metaorders_agg.rename(columns={
-        'trader': 'NbChild', 'Volume':'MetaVolume', 'Impact': 'MetaImpact'
+        'Volume':'MetaVolume', 'Impact': 'MetaImpact'
     })
 
     metaorders_agg['Ratio'] = metaorders_agg['MetaImpact'] / np.sqrt(metaorders_agg['MetaVolume'])
 
-    #sorted_trades = sorted_trades.groupby('metaid').apply(lambda x: x.iloc[2:])
-
     return metaorders_agg, sorted_trades
 
-def mapping_function(trades, nb_traders, kind, alpha = 0.0) :
-    '''
-    Given a trading frequency distribution, generate a list of traders for each trade
-    Inputs :
-    trades : DataFrame with trades
-    nb_traders : number of traders  
-    kind : type of distribution for the trader's frequency
-    alpha : exponent of the distribution (if kind = 'power')
-
-    Outputs :
-    traders : list of traders for each trade
-    '''
-    ### Choose a trading frequency distribution
+def mapping_function(trades, nb_traders, kind, alpha = 0.0):
     if kind == 'power':
-        samples = powerlaw.rvs(int(alpha), size=int(nb_traders))
-    if kind =='uniform':
-        samples = np.ones(nb_traders)
-    frequencies = samples / samples.sum()
-    cum_freq = np.cumsum(frequencies)
-    traders = []
+        shape = float(alpha) if float(alpha) > 0 else 1.5
+        # Genera i pesi e ORDINALi in modo decrescente
+        samples = (np.random.pareto(shape, int(nb_traders)) + 1)
+        samples = np.sort(samples)[::-1] # I trader iniziali avranno pesi maggiori
+    elif kind == 'uniform':
+        samples = np.ones(int(nb_traders))
+    else:
+        samples = np.ones(int(nb_traders))
 
-    ### Assign traders to trades
-    for _ in range (len(trades)):
-        u = random.random()
-        trader_index = np.searchsorted(cum_freq,u)
-        traders.append(f"Trader {trader_index+1}")
-    return traders
+    probabilities = samples / samples.sum()
+    trader_names = [f"Trader {i+1}" for i in range(int(nb_traders))]
+    
+    # Usa gli indici per il campionamento per mantenere l'ordine nel plot
+    trader_indices = np.arange(int(nb_traders))
+    chosen_indices = np.random.choice(trader_indices, size=len(trades), p=probabilities)
+    
+    return [f"Trader {i+1}" for i in chosen_indices]
+
+if __name__ == "__main__":
+    nb_traders = 20
+    result = mapping_function(np.full(10000000, 0.0), nb_traders, 'uniform', 2.0)
+    
+    # Ordiniamo le etichette per l'asse X (Trader 1, Trader 2, ...)
+    labels = [f"Trader {i+1}" for i in range(nb_traders)]
+    counts = [result.count(l) for l in labels]
+    
+    plt.bar(labels, counts)
+    plt.xticks(rotation=45)
+    plt.show()

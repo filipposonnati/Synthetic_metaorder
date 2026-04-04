@@ -41,6 +41,7 @@ def save(index_time):
             meta_duration = t_end_meta - t_begin_meta
             meta_sign     = meta_row['sign']
             meta_volume   = meta_row['MetaVolume']
+            metaid        = meta_row['metaid']
 
             # window [index_time, index_time+1] * meta_duration after t_end
             t_start_window = t_begin_meta + meta_duration * index_time
@@ -48,7 +49,8 @@ def save(index_time):
 
             post_trades = trades[
                 (trades['BeginTime'] >= t_start_window) &
-                (trades['BeginTime'] <  t_end_window)
+                (trades['BeginTime'] <  t_end_window) &
+                (trades['metaid'] == metaid)
             ].copy()
 
             if post_trades.empty:
@@ -79,9 +81,9 @@ plt.rcParams.update({
     'legend.fontsize': 14,
 })
 
-dir    = 'post_trades'
+dir    = 'post_trades_same'
 length = 2       # number of meta_duration windows after execution end
-n_time_bins = 40 # fine time bins per window
+n_time_bins = 10 # fine time bins per window
 
 # ── ensure CSVs exist ────────────────────────────────────────────────────────
 for index_time in range(length):
@@ -171,7 +173,7 @@ for path in sorted(paths[:length]):
         y = Y * np.sqrt(x)
 
         fig, ax1 = plt.subplots()
- 
+
         ax1.plot(Q, I, marker='o', color='C0', label=r'$I(Q)$')
         ax1.plot(x, y, marker='', color='C0', label=r'sqrt')
         ax1.set_xscale('log')
@@ -191,7 +193,8 @@ for path in sorted(paths[:length]):
         ax1.legend(lines1 + lines2, labels1 + labels2)
  
         plt.tight_layout()
-        plt.pause(0.00001)
+        #plt.pause(0.00001)
+        plt.savefig(f'..\\images\\impact_time_curve_ext\\{t_mid:.4f}.png')
         plt.close()
 
         t_centers.append(t_mid)
