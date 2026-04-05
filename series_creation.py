@@ -10,6 +10,15 @@ import pywt
 # Use the new-style Generator: faster standard_normal than legacy np.random.normal
 _rng = np.random.default_rng()
 
+plt.rcParams.update({
+    'font.size': 12,          # Dimensione base per tutto il testo
+    'axes.titlesize': 20,     # Titolo
+    'axes.labelsize': 16,     # Etichette assi
+    'xtick.labelsize': 12,    # Numeri asse X
+    'ytick.labelsize': 12,    # Numeri asse Y
+    'legend.fontsize': 14     # Legenda
+})
+
 
 # =============================================================================
 # SERIES GENERATION
@@ -273,15 +282,51 @@ def compute_pacf(series, nlags=100):
     return pacf(x, nlags=nlags, method='ywm')
 
 
-def plot_acf_pacf(series, gamma, filename, nlags_acf=1000, nlags_pacf=100):
+def plot_pacf(series, gamma, filename, nlags_acf=1000, nlags_pacf=100):
     """
-    Plots ACF (continuous + binary) and PACF with theoretical power-law overlays.
+    Plots PACF with theoretical power-law overlays.
+
+    Panel layout
+    ------------
+    1. PACF (linear scale)
+
+    Parameters
+    ----------
+    series     : array  — input time series
+    gamma      : float  — theoretical decay exponent for the reference lines
+    filename   : str    — output path (no extension); saved as <filename>.png
+    nlags_pacf : int    — lags for PACF panel (default 100)
+    """
+    pacf_vals = compute_pacf(series, nlags=nlags_pacf)
+
+    fig = plt.figure(figsize=(8, 5))
+
+    # --- Panel 3: PACF ---
+    plt.stem(np.arange(len(pacf_vals)), pacf_vals, markerfmt='C0o',
+            linefmt='C0-', basefmt='k-')
+    plt.axhline(0, color='k', lw=0.8)
+    ci = 1.96 / np.sqrt(len(series))
+    plt.axhline(ci, color='r', ls='--', lw=0.8, label='95% CI')
+    plt.axhline(-ci, color='r', ls='--', lw=0.8)
+    plt.title('PACF')
+    plt.xlabel('Lag'); 
+    plt.ylabel('Partial Autocorrelation')
+    plt.legend() 
+    plt.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(f'{filename}.png')
+    plt.close()
+
+
+def plot_acf(series, gamma, filename, nlags_acf=1000):
+    """
+    Plots ACF (continuous + binary) with theoretical power-law overlays.
 
     Panel layout
     ------------
     1. Continuous ACF (log-log) with tau^(-gamma) reference line and OLS fit
     2. Binary-clipped ACF (log-log) with (2/pi)*tau^(-gamma) reference line
-    3. PACF (linear scale)
 
     Parameters
     ----------
@@ -289,46 +334,32 @@ def plot_acf_pacf(series, gamma, filename, nlags_acf=1000, nlags_pacf=100):
     gamma      : float  — theoretical decay exponent for the reference lines
     filename   : str    — output path (no extension); saved as <filename>.png
     nlags_acf  : int    — lags for ACF panels (default 1000)
-    nlags_pacf : int    — lags for PACF panel (default 100)
     """
     acf_cont, acf_bin  = compute_acf(series, nlags=nlags_acf)
-    pacf_vals          = compute_pacf(series, nlags=nlags_pacf)
     gamma_hat, _, r2   = fit_acf(acf_cont)
 
     lags_ref = np.arange(1, nlags_acf)
     y_ref    = (lags_ref ** -gamma) * (acf_cont[10] / (10 ** -gamma))
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     # --- Panel 1: Continuous ACF ---
     ax = axes[0]
     ax.plot(acf_cont, label='Empirical ACF (Continuous)', alpha=0.7)
     ax.plot(lags_ref, y_ref, 'r--', label=f'Theoretical $\\tau^{{-{gamma:.2f}}}$')
     ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_title(f'ACF  [fitted γ={gamma_hat:.3f}, R²={r2:.3f}]')
-    ax.set_xlabel('Lag (log)'); ax.set_ylabel('Autocorrelation (log)')
+    #ax.set_title(f'ACF  [fitted γ={gamma_hat:.3f}, R²={r2:.3f}]')
+    ax.set_xlabel('Lag'); ax.set_ylabel('Autocorrelation')
     ax.legend(); ax.grid(True, which='both', ls='-', alpha=0.2)
 
     # --- Panel 2: Binary ACF ---
     ax = axes[1]
     ax.plot(acf_bin, color='orange', label='Empirical ACF (Binary)', alpha=0.7)
-    ax.plot(lags_ref, y_ref * (2 / np.pi), 'k--', label='Theoretical Decay')
+    ax.plot(lags_ref, y_ref * (2 / np.pi), 'k--', label='Theoretical')
     ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_title('Binary Clipped ACF (Sign)')
-    ax.set_xlabel('Lag (log)')
+    #ax.set_title('Binary Clipped ACF (Sign)')
+    ax.set_xlabel('Lag')
     ax.legend(); ax.grid(True, which='both', ls='-', alpha=0.2)
-
-    # --- Panel 3: PACF ---
-    ax = axes[2]
-    ax.stem(np.arange(len(pacf_vals)), pacf_vals, markerfmt='C0o',
-            linefmt='C0-', basefmt='k-')
-    ax.axhline(0, color='k', lw=0.8)
-    ci = 1.96 / np.sqrt(len(series))
-    ax.axhline(ci, color='r', ls='--', lw=0.8, label='95% CI')
-    ax.axhline(-ci, color='r', ls='--', lw=0.8)
-    ax.set_title('PACF')
-    ax.set_xlabel('Lag'); ax.set_ylabel('Partial Autocorrelation')
-    ax.legend(); ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(f'{filename}.png')
@@ -1093,52 +1124,6 @@ def plot_stationarity(series, filename, window_frac=0.05):
 
 
 # =============================================================================
-# LEGACY ENTRY POINT (ACF only, preserves original call signature)
-# =============================================================================
-
-def acf_plot(series, filename):
-    """
-    Legacy wrapper: plots ACF (continuous + binary) using the original layout.
-
-    Retained for backward compatibility. For new analyses prefer plot_acf_pacf.
-
-    Parameters
-    ----------
-    series   : array — input time series
-    filename : str   — output path prefix (images\\ prefix and .png are appended)
-    """
-    series_sign = np.where(series >= 0, 1, -1)
-
-    lags           = 1000
-    acf_continuous = acf(series,      nlags=lags, fft=True)
-    acf_binary     = acf(series_sign, nlags=lags, fft=True)
-
-    x_ref = np.arange(1, lags)
-    y_ref = (x_ref ** -gamma) * (acf_continuous[10] / (10 ** -gamma))
-
-    plt.figure(figsize=(12, 5))
-
-    plt.subplot(1, 2, 1)
-    plt.plot(acf_continuous, label='Empirical ACF (Continuous)', alpha=0.7)
-    plt.plot(x_ref, y_ref, 'r--', label=f'Theoretical Decay $\\tau^{{-{gamma:.2f}}}$')
-    plt.xscale('log'); plt.yscale('log')
-    plt.title('ACF')
-    plt.xlabel('Lag (log)'); plt.ylabel('Autocorrelation (log)')
-    plt.legend(); plt.grid(True, which="both", ls="-", alpha=0.2)
-
-    plt.subplot(1, 2, 2)
-    plt.plot(acf_binary, color='orange', label='Empirical ACF (Binary)', alpha=0.7)
-    plt.plot(x_ref, y_ref * (2 / np.pi), 'k--', label='Theoretical Decay')
-    plt.xscale('log'); plt.yscale('log')
-    plt.title('Binary Clipped ACF (Sign)')
-    plt.xlabel('Lag (log)')
-    plt.legend(); plt.grid(True, which="both", ls="-", alpha=0.2)
-
-    plt.tight_layout()
-    plt.savefig(f'images\\{filename}.png')
-
-
-# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -1147,7 +1132,7 @@ if __name__ == "__main__":
     import os
 
     n     = 100_000_000
-    gamma = 0.6
+    gamma = 0.5
     d     = 0.5 - 0.5 * gamma
     H     = d + 0.5
 
@@ -1169,8 +1154,12 @@ if __name__ == "__main__":
         base = f'images/series_creation/{name.lower()}'
 
         t0 = time.time()
-        plot_acf_pacf(series, gamma, f'{base}_acf_pacf')
-        print(f'  ACF/PACF:       {time.time() - t0:.1f}s')
+        plot_acf(series, gamma, f'{base}_acf')
+        print(f'  ACF:       {time.time() - t0:.1f}s')
+
+        t0 = time.time()
+        plot_pacf(series, gamma, f'{base}_pacf')
+        print(f'  PACF:       {time.time() - t0:.1f}s')
 
         t0 = time.time()
         plot_spectrum(series, gamma, f'{base}_spectrum')
