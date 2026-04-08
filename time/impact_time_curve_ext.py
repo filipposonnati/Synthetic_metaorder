@@ -42,6 +42,7 @@ def save(index_time):
             meta_sign     = meta_row['sign']
             meta_volume   = meta_row['MetaVolume']
             metaid        = meta_row['metaid']
+            meta_trader   = meta_row['trader']
 
             # window [index_time, index_time+1] * meta_duration after t_end
             t_start_window = t_begin_meta + meta_duration * index_time
@@ -49,8 +50,7 @@ def save(index_time):
 
             post_trades = trades[
                 (trades['BeginTime'] >= t_start_window) &
-                (trades['BeginTime'] <  t_end_window) &
-                (trades['metaid'] == metaid)
+                (trades['BeginTime'] <  t_end_window)
             ].copy()
 
             if post_trades.empty:
@@ -64,6 +64,9 @@ def save(index_time):
             post_trades['NormalizedTime'] = normalized_time.values
             post_trades['Impact']         = impact.values
             post_trades['MetaVolume']     = meta_volume
+
+            print(t_begin_meta, t_end_meta, meta_duration)
+            print(post_trades[['NormalizedTime', 'Impact', 'MetaVolume']])
 
             file_path   = f'..\\database\\{dir}\\20_power_2.0_{index_time}.csv'
             file_exists = os.path.isfile(file_path)
@@ -81,9 +84,9 @@ plt.rcParams.update({
     'legend.fontsize': 14,
 })
 
-dir    = 'post_trades_same'
+dir    = 'post_trades'
 length = 2       # number of meta_duration windows after execution end
-n_time_bins = 10 # fine time bins per window
+n_time_bins = 12 # fine time bins per window
 
 # ── ensure CSVs exist ────────────────────────────────────────────────────────
 for index_time in range(length):
@@ -97,6 +100,12 @@ t_centers    = []
 
 paths = np.array(listdir(f'..\\database\\{dir}'))
 
+# ── single figure with subplots for all time-bin log-log plots ───────────────
+n_total_bins = length * n_time_bins
+fig_ll, axes_ll = plt.subplots(4, 3, figsize=(18, 20))
+axes_ll = axes_ll.flatten()
+subplot_idx = 0
+
 for path in sorted(paths[:length]):
     print(path)
     post_trades = pd.read_csv(f'..\\database\\{dir}\\{path}', sep=',')
@@ -107,6 +116,8 @@ for path in sorted(paths[:length]):
     # normalized time for this file runs in [1+index, 2+index]
     t_lo = index
     t_hi = 1.0 + index
+    if index == 0:
+        time_bins = np.linspace(t_lo, t_hi, n_time_bins + 1)**3
     time_bins = np.linspace(t_lo, t_hi, n_time_bins + 1)
 
     post_trades['time_bin'] = pd.cut(
@@ -172,34 +183,41 @@ for path in sorted(paths[:length]):
         x = np.geomspace(min_vol, max_vol, 51)
         y = Y * np.sqrt(x)
 
-        fig, ax1 = plt.subplots()
+        # ── draw into the next subplot ────────────────────────────────────────
+        if subplot_idx < len(axes_ll):
+            ax1 = axes_ll[subplot_idx]
+            subplot_idx += 1
 
-        ax1.plot(Q, I, marker='o', color='C0', label=r'$I(Q)$')
-        ax1.plot(x, y, marker='', color='C0', label=r'sqrt')
-        ax1.set_xscale('log')
-        ax1.set_yscale('log')
-        ax1.set_xlabel(r'$Q$')
-        ax1.set_ylabel(r'$I(Q)$')
-        ax1.tick_params(axis='y')
- 
-        ax2 = ax1.twinx()
-        ax2.hist(group['MetaVolume'], bins=bins_vol, alpha=0.4, label='counts')
-        ax2.set_xscale('log')
-        ax2.set_ylabel('counts')
-        ax2.tick_params(axis='y')
- 
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2)
- 
-        plt.tight_layout()
-        #plt.pause(0.00001)
-        plt.savefig(f'..\\images\\impact_time_curve_ext\\{t_mid:.4f}.png')
-        plt.close()
+            ax1.plot(Q, I, marker='o', color='C0', label=r'$I(Q)$')
+            ax1.plot(x, y, marker='', color='C0', label=r'sqrt')
+            ax1.set_xscale('log')
+            ax1.set_yscale('log')
+            ax1.set_xlabel(r'$Q$')
+            ax1.set_ylabel(r'$I(Q)$')
+            ax1.set_title(f'$t/T$ = {t_mid:.4f}', fontsize=11)
+            ax1.tick_params(axis='y')
+
+            ax2 = ax1.twinx()
+            ax2.hist(group['MetaVolume'], bins=bins_vol, alpha=0.4, label='counts')
+            ax2.set_xscale('log')
+            ax2.set_ylabel('counts')
+            ax2.tick_params(axis='y')
+
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8)
 
         t_centers.append(t_mid)
         Y_values.append(Y)
         Y_err_values.append(Y_err)
+
+# hide any unused subplots
+for idx in range(subplot_idx, len(axes_ll)):
+    axes_ll[idx].set_visible(False)
+
+plt.tight_layout()
+plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_single.png', dpi=150, bbox_inches='tight')
+plt.close()
 
 t_centers    = np.array(t_centers)
 Y_values     = np.array(Y_values)
@@ -252,5 +270,5 @@ plt.legend()
 plt.grid(True, which='both', ls='-')
 plt.tight_layout()
 
-plt.savefig('..\\images\\impact_time_curve_ext_v3.png')
+plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_time_curve.png')
 plt.show()
