@@ -85,7 +85,7 @@ plt.rcParams.update({
 })
 
 dir    = 'post_trades'
-length = 2       # number of meta_duration windows after execution end
+length = 3       # number of meta_duration windows after execution end
 n_time_bins = 12 # fine time bins per window
 
 # ── ensure CSVs exist ────────────────────────────────────────────────────────
@@ -99,12 +99,6 @@ Y_err_values = []
 t_centers    = []
 
 paths = np.array(listdir(f'..\\database\\{dir}'))
-
-# ── single figure with subplots for all time-bin log-log plots ───────────────
-n_total_bins = length * n_time_bins
-fig_ll, axes_ll = plt.subplots(4, 3, figsize=(18, 20))
-axes_ll = axes_ll.flatten()
-subplot_idx = 0
 
 for path in sorted(paths[:length]):
     print(path)
@@ -124,12 +118,17 @@ for path in sorted(paths[:length]):
         post_trades['NormalizedTime'], bins=time_bins, include_lowest=True
     )
 
+    # ── one figure per time window ────────────────────────────────────────────
+    fig_ll, axes_ll = plt.subplots(4, 3, figsize=(18, 20))
+    axes_ll = axes_ll.flatten()
+    subplot_idx = 0
+
     for tb, group in post_trades.groupby('time_bin', observed=True):
         print(tb)
         if len(group) < 10:   # skip bins with too few points for a reliable fit
             continue
 
-        t_mid = (tb.left + tb.right) / 2.0
+        t_mid = group['NormalizedTime'].mean()   # mean of actual data, not bin midpoint
 
         # ── log bins over MetaVolume ─────────────────────────────────────────
         min_vol = group['MetaVolume'].min()
@@ -175,49 +174,60 @@ for path in sorted(paths[:length]):
             continue
 
         mask = np.where(I > 0.0)
-        Q = Q[mask]
-        I = I[mask]
+        Q     = Q[mask]
+        I     = I[mask]
+        I_err = I_err[mask]
 
         print(Y)
 
-        x = np.geomspace(min_vol, max_vol, 51)
-        y = Y * np.sqrt(x)
+        x_fit = np.geomspace(min_vol, max_vol, 200)
+        y_fit = Y * np.sqrt(x_fit)
 
-        # ── draw into the next subplot ────────────────────────────────────────
+        # ── draw into the next subplot (matching impact_time_curve.py design) ─
         if subplot_idx < len(axes_ll):
-            ax1 = axes_ll[subplot_idx]
+            ax = axes_ll[subplot_idx]
             subplot_idx += 1
 
-            ax1.plot(Q, I, marker='o', color='C0', label=r'$I(Q)$')
-            ax1.plot(x, y, marker='', color='C0', label=r'sqrt')
-            ax1.set_xscale('log')
-            ax1.set_yscale('log')
-            ax1.set_xlabel(r'$Q$')
-            ax1.set_ylabel(r'$I(Q)$')
-            ax1.set_title(f'$t/T$ = {t_mid:.4f}', fontsize=11)
-            ax1.tick_params(axis='y')
+            ax.set_title(f'$t/T$ in [{tb.left:.3f}, {tb.right:.3f}]', fontsize=11)
 
-            ax2 = ax1.twinx()
-            ax2.hist(group['MetaVolume'], bins=bins_vol, alpha=0.4, label='counts')
-            ax2.set_xscale('log')
-            ax2.set_ylabel('counts')
-            ax2.tick_params(axis='y')
+            # Twin axis: histogram of MetaVolume (frequency) on the right
+            ax_hist = ax.twinx()
+            ax_hist.hist(group['MetaVolume'], bins=bins_vol, color='steelblue', alpha=0.25,
+                         label='Volume freq.')
+            ax_hist.set_ylabel('Frequency', fontsize=9)
+            ax_hist.tick_params(axis='y', labelsize=8)
+            ax_hist.set_xscale('log')
+            ax_hist.set_zorder(ax.get_zorder() - 1)
+            ax.set_facecolor('none')
 
-            lines1, labels1 = ax1.get_legend_handles_labels()
-            lines2, labels2 = ax2.get_legend_handles_labels()
-            ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8)
+            # Binned mean impact with error bars
+            ax.errorbar(Q, I, yerr=I_err,
+                        fmt='o', color='crimson', markersize=5,
+                        linewidth=1.2, capsize=3, label='Binned mean', zorder=5)
+
+            # Square root fit curve
+            ax.plot(x_fit, y_fit,
+                    linestyle='--', color='black', linewidth=1.5,
+                    label=f'$Y\\sqrt{{Q}}$, $Y$={Y:.3f}±{Y_err:.3f}', zorder=6)
+
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            ax.set_xlabel('$Q$')
+            ax.set_ylabel(r'$I_i$')
+            ax.legend(fontsize=8, loc='upper left')
+            ax.grid(True, which='both', ls='--', alpha=0.3)
 
         t_centers.append(t_mid)
         Y_values.append(Y)
         Y_err_values.append(Y_err)
 
-# hide any unused subplots
-for idx in range(subplot_idx, len(axes_ll)):
-    axes_ll[idx].set_visible(False)
+    # hide any unused subplots in this window's figure
+    for idx in range(subplot_idx, len(axes_ll)):
+        axes_ll[idx].set_visible(False)
 
-plt.tight_layout()
-plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_single.png', dpi=150, bbox_inches='tight')
-plt.close()
+    plt.tight_layout()
+    plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_single_{index}.png', dpi=150, bbox_inches='tight')
+    plt.close()
 
 t_centers    = np.array(t_centers)
 Y_values     = np.array(Y_values)
@@ -258,7 +268,7 @@ print(f'Post-impact fit: a = {a_fit:.4f} ± {a_err:.4f},  beta = {beta_fit:.4f} 
 x_th = np.linspace(t_fit.min(), t_centers.max(), 300)
 plt.plot(x_th, post_impact_model(x_th, a_fit, beta_fit),
             linestyle=':', color='black',
-            label=rf'fit: $\beta={beta_fit:.3f} \pm {beta_err:.3f}$')
+            label=rf'Fitted curve')
 
 # ── plot ──────────────────────────────────────────────────────────────────────
 plt.errorbar(t_centers, Y_values, yerr=Y_err_values,
@@ -271,4 +281,4 @@ plt.grid(True, which='both', ls='-')
 plt.tight_layout()
 
 plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_time_curve.png')
-plt.show()
+#plt.show()

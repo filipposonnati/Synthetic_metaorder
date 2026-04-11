@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from os import listdir
 from scipy.optimize import curve_fit
+import re
 
 def power_law(x, a, delta):
     return a * x**delta
@@ -30,7 +31,25 @@ image_name = 'impact_volume_curve'
 if model != "":
     image_name = image_name + "_" + model
 
+# Pattern Breakdown:
+# meta_             : Matches literal prefix
+# (                 : Start alternation
+#   (?P<num_one>1)  : Case A: The number is exactly 1 (and nothing follows)
+#   |               : OR
+#   (?P<num_others>\d+)_(?P<kind>\w+?)(?:_(?P<exp>[\d.]+))? : Case B: Other numbers + kind + opt. exp
+# )                 : End alternation
+# \.csv             : Matches file extension
+pattern = r"meta_(?:(?P<num_one>1)|(?P<num_others>\d+)_(?P<kind>\w+?)(?:_(?P<exp>[\d.]+))?)\.csv"
+
 for path in paths:
+    match = re.search(pattern, path)
+    num_traders = match.group('num_one') or match.group('num_others')
+    kind = match.group('kind') if match.group('kind') else ""
+    exp = match.group('exp') if match.group('exp') else ""
+
+    parts = [str(num_traders), kind, exp]
+    label = " ".join(filter(None, parts))
+
     synthetic_meta = pd.read_csv(
         f'{dir}\\{path}', 
         sep=',',  # Usa il tabulatore (o cambia in ',' se il tuo file è un CSV standard)
@@ -78,21 +97,10 @@ for path in paths:
 
     #print(f'path: {path}')
 
-    if(path[8:13] == "power"):
-        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:17]}")
-        #print(f"{path[5:17]}")
-    elif(path[7:12] == "power"):
-        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:16]}")
-        #print(f"{path[5:16]}")
-    elif path[8:15] == "uniform":
-        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:15]}")
-        #print(f"{path[5:15]}")
-    elif path[7:14] == "uniform":
-        plt.plot(x, y, linestyle="", marker=".", label = f"{path[5:14]}")
-        #print(f"{path[5:14]}")
+    plt.plot(x, y, linestyle="", marker=".", label = f"{label}")
 
 x_theoretical = np.linspace(1e-6, 1e-3, 2)
-plt.plot(x_theoretical, np.sqrt(x_theoretical), label=r'$y = \sqrt{x}$', linestyle=':', color = "black")
+#plt.plot(x_theoretical, np.sqrt(x_theoretical), label=r'$y = \sqrt{x}$', linestyle=':', color = "black")
 #plt.plot(x_theoretical, x_theoretical, label=r'$y = x$', linestyle='-.', color = "black")
 
 plt.xscale("log")

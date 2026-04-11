@@ -32,7 +32,9 @@ for index, configuration in configurations.iterrows():
 
     print(nb_traders, kind, exponent)
 
-    if kind == 'power':
+    if nb_traders == 1:
+        filename = f'meta_{nb_traders}.csv'
+    elif kind == 'power':
         filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
     else:
         filename = f'meta_{nb_traders}_{kind}.csv'

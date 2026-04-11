@@ -22,7 +22,8 @@ def square_root(x, Y):
 def constant(x, Y):
     return Y
 
-function = '20_power_2.0'
+#function = '4_power_2.0'
+function = '1_uniform'
 
 print(function)
 
@@ -38,9 +39,11 @@ for path in paths:
     ) 
 
     daily_trades = trades[['PartialVolume', 'NbChild', 'PartialImpact', 'MetaVolume']].copy()
-    daily_trades.drop(columns=['NbChild'], inplace=True)
+    #daily_trades.drop(columns=['NbChild'], inplace=True)
 
     trades_total = pd.concat([trades_total, daily_trades])
+
+trades_total = trades_total[trades_total['NbChild'] > 1]
 
 print('Cumulative fit')
 
@@ -98,11 +101,12 @@ for i in range(10):
     delta_err = np.sqrt(pcov[1][1])
 
 print(f'Fit (eff err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
+Y_cum, delta_cum, Y_cum_err, delta_cum_err = Y, delta, Y_err, delta_err  # save for LaTeX table
 
 # 3. Creazione del Plot
 fig, ax1 = plt.subplots(figsize=(8, 6))
 
-ax1.plot(x, y, linestyle="", marker="o", label=f'Cumulative orders {function}', zorder=3)
+ax1.plot(x, y, linestyle="", marker="o", label=f'Binned data', zorder=3)
 
 x_theoretical = np.logspace(np.log10(1e-7), np.log10(2e-3), 100)
 ax1.plot(x_theoretical, Y * x_theoretical**delta, label=r'$y = Yx^{\delta}$', linestyle=':', color="black", zorder=2)
@@ -126,7 +130,7 @@ ax1.grid(True, which="both", ls="-", alpha=0.3)
 
 plt.tight_layout()
 
-plt.savefig('images\\impact_intra_order.png')
+plt.savefig(f'images\\impact_intra_order\\{function}_cumulate.png')
 
 
 
@@ -142,7 +146,7 @@ print('Square root fit')
 trades_total['Ratio'] = trades_total['PartialImpact'] / np.sqrt(trades_total['MetaVolume'])
 trades_total['NormalizedVolume'] = trades_total['PartialVolume'] / trades_total['MetaVolume']
 
-bins = np.linspace(0, 1, 51)
+bins = np.linspace(0, 1, 21)**3
 
 # 3. Assegnazione dei metaordini ai Bin
 # 'include_lowest=True' assicura che il valore minimo sia incluso.
@@ -186,13 +190,14 @@ for i in range(10):
     Y_err = np.sqrt(pcov[0][0])
 
 print(f'Fit (eff err): Y = {Y} +- {Y_err}')
+Y_sqrt, Y_sqrt_err = Y, Y_err  # save for LaTeX table
 
 # 3. Creazione del Plot
 fig = plt.subplots(figsize=(8, 6))
 
-plt.plot(x, y, linestyle="", marker="o", label=f'Binned data {function}', zorder=3)
+plt.plot(x, y, linestyle="", marker="o", label=f'Binned data', zorder=3)
 
-x_theoretical = np.linspace(0.0, 1.0, 100)
+x_theoretical = np.linspace(0.0, 1.0, 50)
 plt.plot(x_theoretical, Y * np.sqrt(x_theoretical), label=r'$y = Y\sqrt{x}$', linestyle=':', color="black", zorder=2)
 
 plt.xlabel(r'$\Sigma q_i / Q$')
@@ -204,7 +209,7 @@ plt.grid(True, which="both", ls="-", alpha=0.3)
 
 plt.tight_layout()
 
-plt.savefig('images\\impact_intra_order_ratio.png')
+plt.savefig(f'images\\impact_intra_order\\{function}_ratio.png')
 
 
 
@@ -220,7 +225,7 @@ print('Flat fit')
 trades_total['Ratio'] = trades_total['PartialImpact'] / np.sqrt(trades_total['PartialVolume'])
 trades_total['NormalizedVolume'] = trades_total['PartialVolume'] / trades_total['MetaVolume']
 
-bins = np.linspace(0, 1, 51)
+bins = np.linspace(0, 1, 26)
 
 # 3. Assegnazione dei metaordini ai Bin
 # 'include_lowest=True' assicura che il valore minimo sia incluso.
@@ -254,11 +259,12 @@ Y = popt[0]
 Y_err = np.sqrt(pcov[0][0])
 
 print(f'Fit (y err): Y = {Y} +- {Y_err}')
+Y_flat, Y_flat_err = Y, Y_err  # save for LaTeX table
 
 # 3. Creazione del Plot
 fig = plt.subplots(figsize=(8, 6))
 
-plt.plot(x, y, linestyle="", marker="o", label=f'Binned data {function}', zorder=3)
+plt.plot(x, y, linestyle="", marker="o", label=f'Binned data', zorder=3)
 
 x_theoretical = np.linspace(0.0, 1.0, 100)
 plt.plot(x_theoretical, np.full(len(x_theoretical), Y), label=r'$y = Y$', linestyle=':', color="black", zorder=2)
@@ -272,4 +278,120 @@ plt.grid(True, which="both", ls="-", alpha=0.3)
 
 plt.tight_layout()
 
-plt.savefig('images\\impact_intra_order_flat.png')
+plt.savefig(f'images\\impact_intra_order\\{function}_flat.png')
+
+
+
+
+
+print('NbChild Analysis')
+
+child_range = range(2, 12)
+fig, ax = plt.subplots(figsize=(11, 7))
+
+# Tab10 gives 10 maximally distinct colors
+colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+# Cycle through linestyles to add a second visual channel
+linestyles = ['-', '--', '-.', ':', '-', '--', '-.', ':', '-', '--']
+linewidths  = [1.5] * 10  # optionally scale: [1.2 + 0.15*i for i in range(10)]
+
+for idx, n_child in enumerate(child_range):
+    subset = trades_total[trades_total['NbChild'] == n_child].copy()
+
+    if len(subset) < 30:
+        print(f"Skipping NbChild={n_child}: insufficient data ({len(subset)} samples)")
+        continue
+
+    subset['Ratio'] = subset['PartialImpact'] / np.sqrt(subset['MetaVolume'])
+    subset['NormalizedVolume'] = subset['PartialVolume'] / subset['MetaVolume']
+
+    bins_x = np.linspace(0, 1, 31)**2
+    subset['bin'] = pd.cut(subset['NormalizedVolume'], bins=bins_x, include_lowest=True)
+
+    grp = subset.groupby('bin', observed=True).agg({
+        'NormalizedVolume': 'mean',
+        'Ratio': ['mean', 'std', 'count']
+    }).dropna()
+
+    grp.columns = ['x', 'y', 'y_std', 'count']
+    x_val = grp['x'].to_numpy()
+    y_val = grp['y'].to_numpy()
+
+    line, = ax.plot(
+        x_val, y_val,
+        color=colors[idx],
+        linestyle=linestyles[idx],
+        linewidth=linewidths[idx],
+        alpha=0.85,
+        label=f'n={n_child}'
+    )
+
+    # Direct end-of-line label (avoids legend hunting)
+    """
+    ax.annotate(
+        f'n={n_child}',
+        xy=(x_val[-1], y_val[-1]),
+        xytext=(4, 0),
+        textcoords='offset points',
+        color=colors[idx],
+        fontsize=9,
+        va='center'
+    )
+    """
+
+ax.set_xlabel(r'$\Sigma q_i / Q$')
+ax.set_ylabel(r'$I_i / \sqrt{Q}$')
+# Keep legend as secondary reference, smaller and compact
+ax.legend(title="n children", fontsize=8, title_fontsize=9,
+          bbox_to_anchor=(1, 1), loc='upper left')
+ax.grid(True, ls="--", alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(f'images\\impact_intra_order\\{function}_ratio_child.png', dpi=150, bbox_inches='tight')
+
+
+print('LaTeX Table')
+
+def fmt(val, err):
+    """Format value and error to matching significant figures."""
+    if err == 0 or np.isnan(err):
+        return f'{val:.4f}', '---'
+    from math import floor, log10
+    decimals = -floor(log10(abs(err))) + 1
+    decimals = max(decimals, 0)
+    fmt_str = f'{{:.{decimals}f}}'
+    return fmt_str.format(val), fmt_str.format(err)
+
+Y_cum_v,  Y_cum_e  = fmt(Y_cum,    Y_cum_err)
+delta_v,  delta_e  = fmt(delta_cum, delta_cum_err)
+Y_sqrt_v, Y_sqrt_e = fmt(Y_sqrt,   Y_sqrt_err)
+Y_flat_v, Y_flat_e = fmt(Y_flat,   Y_flat_err)
+
+latex_table = rf"""
+\begin{{table}}[H]
+\centering
+\label{{tab:fit_comparison_{function}}}
+\begin{{tabular}}{{l l r @{{ $\pm$ }} l}}
+\toprule
+\textbf{{Fit Type}} & \textbf{{Parameter}} & \multicolumn{{2}}{{c}}{{\textbf{{Value}}}} \\
+\midrule
+Square Root & $Y$      & {Y_sqrt_v} & {Y_sqrt_e} \\
+\addlinespace
+Constant    & $Y$      & {Y_flat_v} & {Y_flat_e} \\
+\midrule
+Cumulative  & $Y$      & {Y_cum_v}  & {Y_cum_e}  \\
+            & $\delta$ & {delta_v}  & {delta_e}  \\
+\bottomrule
+\end{{tabular}}
+\caption{{Intra-order best-fit parameters for \texttt{{{function}}}.}}
+\end{{table}}
+"""
+
+print(latex_table)
+
+# Optionally write to a .tex file
+tex_path = f'images\\impact_intra_order\\{function}_fit_table.tex'
+with open(tex_path, 'w') as f:
+    f.write(latex_table.strip())
+print(f'Table saved to {tex_path}')

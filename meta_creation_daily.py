@@ -17,7 +17,9 @@ exponent = 2.0
 
 print(nb_traders, kind, exponent)
 
-if kind == 'power':
+if nb_traders == 1:
+    filename = f'{nb_traders}'
+elif kind == 'power':
     filename = f'{nb_traders}_{kind}_{exponent}'
 else:
     filename = f'{nb_traders}_{kind}'
