@@ -81,16 +81,17 @@ def van_vleck_invert(acf_bin, p_plus):
     acf_gauss = np.empty_like(acf_bin)
     acf_gauss[0] = 1.0
 
+    # Inside van_vleck_invert
+    mu = 2.0 * p_plus - 1.0
+    var = 1.0 - mu**2
+
     for k in range(1, len(acf_bin)):
-        rb = acf_bin[k]
-        try:
-            acf_gauss[k] = brentq(
-                lambda rg: _r_bin_from_r_gauss(rg, theta) - rb,
-                -0.9999, 0.9999, xtol=1e-7, maxiter=60
-            )
-        except ValueError:
-            # Fallback: closed-form arc-sine approximation (exact for p_plus=0.5)
-            acf_gauss[k] = np.clip(np.sin(rb * np.pi / 2.0), -0.9999, 0.9999)
+        target_raw = acf_bin[k] * var + mu**2
+
+        acf_gauss[k] = brentq(
+            lambda rg: _r_bin_from_r_gauss(rg, theta) - target_raw,
+            -0.9999, 0.9999, xtol=1e-7
+        )
 
     return acf_gauss
 
@@ -209,6 +210,47 @@ def surrogate_test(all_signs, n_surrogates=200, seed=0):
     return obs_kurt, surr_kurt, p_values
 
 
+
+def generate_and_save_synthetic_signs(data_dir, output_dir, acf_gauss_target, p_plus, seed=42):
+    """
+    Legge i file originali, genera segni sintetici con la stessa lunghezza e 
+    struttura temporale, e li salva in una nuova cartella.
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    paths = listdir(data_dir)
+    rng = np.random.default_rng(seed)
+    
+    print(f"Inizio generazione segni sintetici in: {output_dir}")
+    
+    for path in paths:
+        # 1. Caricamento dati originali
+        file_path = os.path.join(data_dir, path)
+        df_orig = pd.read_csv(file_path, header=None)
+        N = len(df_orig)
+        
+        # 2. Generazione segnale Gaussiano con la memoria target (Wiener-Khinchin)
+        # Usiamo reconstruct_gaussian definita precedentemente
+        # Nota: N_recon deve essere almeno lungo quanto il segnale originale
+        gauss_sig, _ = reconstruct_gaussian(acf_gauss_target, N=N, n_realizations=1, seed=seed)
+        gauss_sig = gauss_sig[0] # Estraiamo la singola realizzazione
+        
+        # 3. Binarizzazione (Soglia Van Vleck)
+        synth_signs = binarize(gauss_sig, p_plus=p_plus)
+        
+        # 4. Creazione del nuovo DataFrame
+        # Manteniamo Tempo (col 0), Prezzo (col 1), Volume (col 2) originali
+        # Sostituiamo il Segno (col 3) con quello sintetico
+        df_synth = df_orig.copy()
+        df_synth[3] = synth_signs
+        
+        # 5. Salvataggio
+        output_path = os.path.join(output_dir, path)
+        df_synth.to_csv(output_path, header=None, index=False)
+        print(f"File salvato: {path} (N={N})")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DATA LOADING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -268,10 +310,6 @@ print("Inverting van Vleck relation")
 acf_gauss_target = van_vleck_invert(pooled, p_plus=p_plus)
 
 # Step 2 — reconstruct Gaussian signal
-# Use many long realizations and average their ACFs to suppress noise.
-# For a binary process with long-range dependence, ACF variance at lag K
-# scales as ~1/N, so N=200*max_lag with N_REAL realizations gives
-# effective N_eff = N_REAL * N per lag.
 N_REAL  = 250
 N_recon = max(int(np.median([len(s) for s in all_signs])), 1000 * max_lag)
 print(f"Reconstructing {N_REAL} Gaussian realizations (N={N_recon} each)")
@@ -357,46 +395,6 @@ fig2.tight_layout()
 fig2.savefig('images\\acf_roundtrip.png', dpi=300, bbox_inches='tight')
 
 plt.close()
-
-def generate_and_save_synthetic_signs(data_dir, output_dir, acf_gauss_target, p_plus, seed=42):
-    """
-    Legge i file originali, genera segni sintetici con la stessa lunghezza e 
-    struttura temporale, e li salva in una nuova cartella.
-    """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    paths = listdir(data_dir)
-    rng = np.random.default_rng(seed)
-    
-    print(f"Inizio generazione segni sintetici in: {output_dir}")
-    
-    for path in paths:
-        # 1. Caricamento dati originali
-        file_path = os.path.join(data_dir, path)
-        df_orig = pd.read_csv(file_path, header=None)
-        N = len(df_orig)
-        
-        # 2. Generazione segnale Gaussiano con la memoria target (Wiener-Khinchin)
-        # Usiamo reconstruct_gaussian definita precedentemente
-        # Nota: N_recon deve essere almeno lungo quanto il segnale originale
-        gauss_sig, _ = reconstruct_gaussian(acf_gauss_target, N=N, n_realizations=1, seed=seed)
-        gauss_sig = gauss_sig[0] # Estraiamo la singola realizzazione
-        
-        # 3. Binarizzazione (Soglia Van Vleck)
-        synth_signs = binarize(gauss_sig, p_plus=p_plus)
-        
-        # 4. Creazione del nuovo DataFrame
-        # Manteniamo Tempo (col 0), Prezzo (col 1), Volume (col 2) originali
-        # Sostituiamo il Segno (col 3) con quello sintetico
-        df_synth = df_orig.copy()
-        df_synth[3] = synth_signs
-        
-        # 5. Salvataggio
-        output_path = os.path.join(output_dir, path)
-        df_synth.to_csv(output_path, header=None, index=False)
-        print(f"File salvato: {path} (N={N})")
-
 
 # Definiamo le cartelle
 output_folder = 'database\\data_signs'
