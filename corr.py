@@ -393,7 +393,6 @@ ax[1].legend()
 
 fig2.tight_layout()
 fig2.savefig('images\\acf_roundtrip.png', dpi=300, bbox_inches='tight')
-
 plt.close()
 
 # Definiamo le cartelle
