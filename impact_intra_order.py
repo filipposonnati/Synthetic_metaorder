@@ -22,13 +22,18 @@ def square_root(x, Y):
 def constant(x, Y):
     return Y
 
-#function = '4_power_2.0'
-function = '1_uniform'
+function = '20_power_2.0'
+#function = '1'
 
-print(function)
+model = 'ar_1000'
+#model = ''
 
-dir = 'database\\trades_' + function
+print(function + ' ' + model)
+
+dir = f'database\\{f"trades_{model}_" if model else "trades_"}' + function
 paths = np.array(listdir(dir))
+
+print(dir)
 
 trades_total = None
 
@@ -130,7 +135,7 @@ ax1.grid(True, which="both", ls="-", alpha=0.3)
 
 plt.tight_layout()
 
-plt.savefig(f'images\\impact_intra_order\\{function}_cumulate.png')
+plt.savefig(f'images\\impact_intra_order\\{model + "_" if model else ""}{function}_cumulate.png')
 
 
 
@@ -209,7 +214,7 @@ plt.grid(True, which="both", ls="-", alpha=0.3)
 
 plt.tight_layout()
 
-plt.savefig(f'images\\impact_intra_order\\{function}_ratio.png')
+plt.savefig(f'images\\impact_intra_order\\{model + "_" if model else ""}{function}_ratio.png')
 
 
 
@@ -278,7 +283,7 @@ plt.grid(True, which="both", ls="-", alpha=0.3)
 
 plt.tight_layout()
 
-plt.savefig(f'images\\impact_intra_order\\{function}_flat.png')
+plt.savefig(f'images\\impact_intra_order\\{model + "_" if model else ""}{function}_flat.png')
 
 
 
@@ -348,50 +353,4 @@ ax.legend(title="n children", fontsize=8, title_fontsize=9,
 ax.grid(True, ls="--", alpha=0.3)
 
 plt.tight_layout()
-plt.savefig(f'images\\impact_intra_order\\{function}_ratio_child.png', dpi=150, bbox_inches='tight')
-
-
-print('LaTeX Table')
-
-def fmt(val, err):
-    """Format value and error to matching significant figures."""
-    if err == 0 or np.isnan(err):
-        return f'{val:.4f}', '---'
-    from math import floor, log10
-    decimals = -floor(log10(abs(err))) + 1
-    decimals = max(decimals, 0)
-    fmt_str = f'{{:.{decimals}f}}'
-    return fmt_str.format(val), fmt_str.format(err)
-
-Y_cum_v,  Y_cum_e  = fmt(Y_cum,    Y_cum_err)
-delta_v,  delta_e  = fmt(delta_cum, delta_cum_err)
-Y_sqrt_v, Y_sqrt_e = fmt(Y_sqrt,   Y_sqrt_err)
-Y_flat_v, Y_flat_e = fmt(Y_flat,   Y_flat_err)
-
-latex_table = rf"""
-\begin{{table}}[H]
-\centering
-\label{{tab:fit_comparison_{function}}}
-\begin{{tabular}}{{l l r @{{ $\pm$ }} l}}
-\toprule
-\textbf{{Fit Type}} & \textbf{{Parameter}} & \multicolumn{{2}}{{c}}{{\textbf{{Value}}}} \\
-\midrule
-Square Root & $Y$      & {Y_sqrt_v} & {Y_sqrt_e} \\
-\addlinespace
-Constant    & $Y$      & {Y_flat_v} & {Y_flat_e} \\
-\midrule
-Cumulative  & $Y$      & {Y_cum_v}  & {Y_cum_e}  \\
-            & $\delta$ & {delta_v}  & {delta_e}  \\
-\bottomrule
-\end{{tabular}}
-\caption{{Intra-order best-fit parameters for \texttt{{{function}}}.}}
-\end{{table}}
-"""
-
-print(latex_table)
-
-# Optionally write to a .tex file
-tex_path = f'images\\impact_intra_order\\{function}_fit_table.tex'
-with open(tex_path, 'w') as f:
-    f.write(latex_table.strip())
-print(f'Table saved to {tex_path}')
+plt.savefig(f'images\\impact_intra_order\\{model + "_" if model else ""}{function}_ratio_child.png', dpi=150, bbox_inches='tight')

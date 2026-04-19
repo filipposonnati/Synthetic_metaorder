@@ -9,11 +9,12 @@ from os import listdir
 import methods
 from pathlib import Path
 
-paths = np.array(listdir('database\\data'))
-
+model = 'ar_1000'
 nb_traders = 20
 kind = 'power'
 exponent = 2.0
+
+paths = np.array(listdir(f'database\\{f"data_{model}" if model else "data"}'))
 
 print(nb_traders, kind, exponent)
 
@@ -25,7 +26,7 @@ else:
     filename = f'{nb_traders}_{kind}'
 
 # Directory creation if not present and cancellation of what is inside
-dir_path = Path("database\\meta_" + filename)
+dir_path = Path(f'database\\{f"meta_{model}_" if model else "meta_"}' + filename)
 dir_path.mkdir(parents=True, exist_ok=True)
 
 for item in dir_path.iterdir():
@@ -34,7 +35,7 @@ for item in dir_path.iterdir():
     elif item.is_dir():
         shutil.rmtree(item)
 
-dir_path = Path("database\\trades_" + filename)
+dir_path = Path(f'database\\{f"trades_{model}_" if model else "trades_"}' + filename)
 dir_path.mkdir(parents=True, exist_ok=True)
 
 for item in dir_path.iterdir():
@@ -58,5 +59,5 @@ for path in paths:
 
     l += len(meta)
 
-    meta.to_csv(f'database\\meta_' + filename + '\\meta_' + date_string + '.csv', index=False)
-    trades.to_csv(f'database\\trades_' + filename + '\\trades_' + date_string + '.csv', index=False)
+    meta.to_csv(f'database\\{f"meta_{model}_" if model else "meta_"}' + filename + '\\meta_' + date_string + '.csv', index=False)
+    trades.to_csv(f'database\\{f"trades_{model}_" if model else "trades_"}' + filename + '\\trades_' + date_string + '.csv', index=False)

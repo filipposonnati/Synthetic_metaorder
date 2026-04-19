@@ -17,7 +17,7 @@ plt.rcParams.update({
     'legend.fontsize': 14     # Legenda
 })
 
-model = ""
+model = "ar_1000"
 
 dir = 'database\\meta'
 if model != "":

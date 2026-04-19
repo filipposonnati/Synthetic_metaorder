@@ -11,6 +11,7 @@ import os
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from utils import clear_data, open_data, save_simulated_data
+#from ar import ar_fit, simulate_ar
 
 def ar_fit(returns, volumes, p=10):
     n = len(returns)
@@ -442,9 +443,9 @@ def simulate_arfima_power(results, n_steps, initial_v, initial_r, initial_price=
 
 paths = np.array(listdir('..\\database\\data'))
 
-p = 10
+p = 1000
 
-name = f'arfima_{p}'
+name = f'ar_{p}'
 
 dir = 'database\\data_' + name
 
@@ -466,9 +467,19 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p] # Prezzo reale al punto p
 
-    results = arfima_power_fit(r, v, p=p, d=0.3) # Example d value
+    #results = arfima_power_fit(r, v, p=p, d=0.3) # Example d value
+    results = ar_fit(r, v, p)
 
+    """
     prices_sim, volumes_sim, r_sim = simulate_arfima_power(
+        results,
+        n_steps=len(r),
+        initial_v=initial_v,
+        initial_r=initial_r,
+        initial_price=initial_price
+    )
+    """
+    prices_sim, volumes_sim, r_sim = simulate_ar(
         results,
         n_steps=len(r),
         initial_v=initial_v,

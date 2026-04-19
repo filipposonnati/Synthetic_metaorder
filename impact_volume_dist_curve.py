@@ -18,15 +18,19 @@ plt.rcParams.update({
     'legend.fontsize': 14     # Legenda
 })
 
-path = 'meta_40_power_2.0.csv'
+model = 'ar_1000'
+model = ''
+function = '20_power_2.0.csv'
+
+path = 'meta_' + function
 
 print(path)
 
-dir = 'database\\meta_arfima_10'
+dir = 'database\\meta_' + model if model else 'database\\meta'
 
 print(dir)
 
-image_name = 'impact_volume_dist_curve_arfima'
+image_name = 'impact_volume_dist_curve_' + model + '_' + function if model else 'impact_volume_dist_curve_' + function
 
 synthetic_meta = pd.read_csv(
     f'{dir}\\{path}', 
