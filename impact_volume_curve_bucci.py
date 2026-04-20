@@ -25,8 +25,13 @@ if model != "":
 
 paths = np.array(listdir(dir))
 
-fig, ax_main = plt.subplots(figsize=(8, 6))
-ax_hist = ax_main.twinx()  # Right axis for histogram
+# Two stacked subplots sharing the X axis: top = points, bottom = distributions
+fig, (ax_main, ax_hist) = plt.subplots(
+    2, 1,
+    figsize=(8, 10),
+    sharex=True,
+    gridspec_kw={'hspace': 0.08}   # tight vertical gap; x-tick labels only on bottom
+)
 
 image_name = 'impact_ratio_participation_curve'
 if model != "":
@@ -77,11 +82,10 @@ for i, path in enumerate(paths):
 
     pr = df_res['ParticipationRate'].to_numpy()
 
-    # 3. Histogram for this path (right axis), same color as scatter, no label (already in legend)
+    # 3. Histogram on the bottom subplot
     hist_bins = np.logspace(np.log10(pr.min()), np.log10(pr.max()), 51)
     counts, edges = np.histogram(pr, bins=hist_bins, density=False)
-    widths = np.diff(edges)
-    ax_hist.step(edges[:-1], counts, where='post', color=color, alpha=1.0, linewidth=1.5)
+    ax_hist.step(edges[:-1], counts, where='post', color=color, alpha=1.0, linewidth=1.5, label=label)
 
     # 4. Creazione dei Bin Logaritmici sull'asse X (participation rate)
     bins = np.logspace(np.log10(pr.min()), np.log10(pr.max()), 101)
@@ -101,24 +105,30 @@ for i, path in enumerate(paths):
     x = grouped['PR_mean'].to_numpy()
     y = grouped['Ratio_mean'].to_numpy()
 
-    ax_main.plot(x, y, linestyle="", marker=".", color=color, label=f"{label}")
+    # Top subplot: binned mean points
+    ax_main.plot(x, y, linestyle="", marker=".", color=color, label=label)
 
-ax_hist.set_xscale("log")
-ax_hist.set_ylabel('Density', fontsize=16)
-ax_hist.tick_params(axis='y', labelsize=12)
-
-# Keep histogram bars behind the main plot lines
-ax_hist.set_zorder(ax_main.get_zorder() - 1)
-ax_main.set_facecolor('none')  # Make main axis background transparent
-
-# --- Main axis formatting ---
+# --- Top subplot (points) formatting ---
 ax_main.set_xscale("log")
 ax_main.set_yscale("log")
-ax_main.set_xlabel(r'$\phi = Q / Q_P$', fontsize=16)
-ax_main.set_ylabel(r'$I(Q) / \sqrt{Q}$', fontsize=16)
+ax_main.set_ylabel(r'$I(Q) / \sqrt{Q}$')
 ax_main.grid(True, which="both", ls="-")
-ax_main.legend(loc='lower left')
+# Single legend placed to the right of the top subplot
+ax_main.legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
+# Hide x-tick labels on top plot (shared axis, labels shown on bottom)
+plt.setp(ax_main.get_xticklabels(), visible=False)
+
+# --- Bottom subplot (distributions) formatting ---
+ax_hist.set_xscale("log")
+ax_hist.set_xlabel(r'$\phi = Q / Q_P$')
+ax_hist.set_ylabel('Count')
+ax_hist.grid(True, which="both", ls="-")
+# Extend x-axis to 1 so the full participation rate range is always visible.
+# Note: the histogram naturally stops where your data stops (pr.max() per file),
+# which is typically well below 1. This only affects the axis limit, not the data.
+current_xlim = ax_hist.get_xlim()
+ax_hist.set_xlim(right=max(current_xlim[1], 1.0))
 
 plt.tight_layout()
-plt.savefig(f'images\\part_rate\\{image_name}.png')
+plt.savefig(f'images\\part_rate\\{image_name}.png', bbox_inches='tight', dpi=300)
 plt.show()

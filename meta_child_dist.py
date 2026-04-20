@@ -3,14 +3,12 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import powerlaw
 import os
+from scipy.stats import ks_2samp
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 results_dir = 'database\\meta_child_dist'  # must match meta_child_generate.py
-nb_traders  = 4
-kind        = 'power'
-exponent    = 2.0
 
 plt.rcParams.update({
     'font.size': 12,
@@ -98,6 +96,43 @@ def compute_ccdf(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     x_values          = bin_edges[:-1]
     ccdf              = np.cumsum(counts[::-1])[::-1]
     return x_values, ccdf
+
+
+# ---------------------------------------------------------------------------
+# KS test helper
+# ---------------------------------------------------------------------------
+
+def run_ks_test(data_b: np.ndarray, data_s: np.ndarray) -> dict:
+    """
+    Run a two-sample KS test between data_b and data_s.
+
+    Returns a dict with:
+      - stat   : KS statistic D
+      - p      : p-value
+      - x_D    : x-value where max separation occurs (on the shared ECDF grid)
+      - ecdf_b : ECDF of base at x_D
+      - ecdf_s : ECDF of signs at x_D
+    """
+    stat, p = ks_2samp(data_b, data_s)
+
+    # Locate the x where |ECDF_b - ECDF_s| is maximised
+    sorted_b = np.sort(data_b)
+    sorted_s = np.sort(data_s)
+    all_vals = np.sort(np.concatenate([data_b, data_s]))
+
+    ecdf_b_vals = np.searchsorted(sorted_b, all_vals, side='right') / len(data_b)
+    ecdf_s_vals = np.searchsorted(sorted_s, all_vals, side='right') / len(data_s)
+
+    d_vals  = np.abs(ecdf_b_vals - ecdf_s_vals)
+    max_idx = np.argmax(d_vals)
+
+    return {
+        'stat'  : stat,
+        'p'     : p,
+        'x_D'   : all_vals[max_idx],
+        'ecdf_b': ecdf_b_vals[max_idx],
+        'ecdf_s': ecdf_s_vals[max_idx],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +267,7 @@ def plot_all(results_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Compare meta_child_dist vs meta_child_dist_signs
+# Compare meta_child_dist vs meta_child_dist_signs  (with KS test)
 # ---------------------------------------------------------------------------
 
 def compare_all_distributions(
@@ -242,12 +277,19 @@ def compare_all_distributions(
     """
     Load every configuration present in *either* directory and produce a
     multi-panel figure:  one row per configuration, two columns (PDF | CCDF).
- 
+
     Each subplot overlays:
       • meta_child_dist       — blue circles
       • meta_child_dist_signs — orange squares
+
+    When both datasets exist for a configuration, a two-sample KS test is run
+    and the result is annotated on the CCDF panel:
+      • A vertical dashed red line marks x where |ECDF_base - ECDF_signs| is
+        maximised (the KS distance D), consistent with the ks.py visualisation.
+      • A text box reports D and the p-value.
+
     Missing stems in one directory are silently skipped for that dataset.
- 
+
     Parameters
     ----------
     results_dir_base  : path to the 'meta_child_dist'       output folder
@@ -256,15 +298,15 @@ def compare_all_distributions(
     # Load all available data from both directories
     all_base  = load_all(results_dir_base)
     all_signs = load_all(results_dir_signs)
- 
+
     # Union of stems, sorted for a stable row order
     stems = sorted(set(all_base) | set(all_signs))
     n     = len(stems)
- 
+
     if n == 0:
         print("[compare_all] No data found in either directory.")
         return
- 
+
     # --- compute empirical PDF & CCDF ---
     def _pdf_ccdf(data):
         bins              = np.arange(1, max(data) + 2)
@@ -272,12 +314,12 @@ def compare_all_distributions(
         x_pdf             = bin_edges[:-1]
         x_ccdf, ccdf      = compute_ccdf(data)
         return x_pdf, counts, x_ccdf, ccdf
- 
+
     STYLE_BASE  = dict(linestyle='', marker='o', markersize=3.5,
                        color='C0', alpha=0.85, label='meta_child_dist')
     STYLE_SIGNS = dict(linestyle='', marker='o', markersize=3.5,
                        color='C1', alpha=0.85, label='meta_child_dist_signs')
- 
+
     # --- build figure: n rows × 2 cols ---
     row_h = 3.8
     fig   = plt.figure(figsize=(13, row_h * n))
@@ -289,11 +331,11 @@ def compare_all_distributions(
         left=0.08, right=0.98,
         top=0.98,  bottom=0.03,
     )
- 
+
     for row, stem in enumerate(stems):
         ax_pdf  = fig.add_subplot(gs[row, 0])
         ax_ccdf = fig.add_subplot(gs[row, 1])
- 
+
         # --- style both axes ---
         for ax, ylabel, col_title in [
             (ax_pdf,  'P(x)',      'PDF'),
@@ -308,75 +350,78 @@ def compare_all_distributions(
             # Column header only on first row
             if row == 0:
                 ax.set_title(col_title)
- 
+
         # Row label on the left spine
         ax_pdf.set_ylabel(f'{stem.replace("_", " ")}\nP(x)')
-        
- 
+
         # --- plot base ---
+        data_b = None
         if stem in all_base:
-            _, data_b          = all_base[stem]
+            _, data_b = all_base[stem]
             x_pdf_b, cnt_b, x_ccdf_b, ccdf_b = _pdf_ccdf(data_b)
             ax_pdf.plot( x_pdf_b,  cnt_b,  **STYLE_BASE)
             ax_ccdf.plot(x_ccdf_b, ccdf_b, **STYLE_BASE)
- 
+
         # --- plot signs ---
+        data_s = None
         if stem in all_signs:
-            _, data_s          = all_signs[stem]
+            _, data_s = all_signs[stem]
             x_pdf_s, cnt_s, x_ccdf_s, ccdf_s = _pdf_ccdf(data_s)
             ax_pdf.plot( x_pdf_s,  cnt_s,  **STYLE_SIGNS)
             ax_ccdf.plot(x_ccdf_s, ccdf_s, **STYLE_SIGNS)
- 
+
+        # --- KS test (only when both datasets are available) ---
+        if data_b is not None and data_s is not None:
+            ks = run_ks_test(data_b, data_s)
+
+            # Print results to console
+            sig = "***" if ks['p'] < 0.001 else ("**" if ks['p'] < 0.01
+                  else ("*" if ks['p'] < 0.05 else "ns"))
+            print(f"[KS {stem:12s}]  D = {ks['stat']:.5f}   p = {ks['p']:.2e}  {sig}")
+
+            # *** — p < 0.001: extremely strong evidence against the null hypothesis
+            # **  — p < 0.01: very strong evidence
+            # *   — p < 0.05: standard significance threshold (the most commonly used cutoff)
+            # ns  — "not significant": p ≥ 0.05, meaning you can't reject the null hypothesis that the two distributions are the same
+
+            # Mark the point of maximum separation on the CCDF plot with a
+            # vertical line spanning the two ECDF values at x_D
+            # ax_ccdf.vlines(
+            #     ks['x_D'],
+            #     min(ks['ecdf_b'], ks['ecdf_s']),
+            #     max(ks['ecdf_b'], ks['ecdf_s']),
+            #     color='red', linestyle='--', linewidth=1.4,
+            #     label=f'KS distance (D)',
+            #     zorder=5,
+            # )
+
+            # # Annotate with D and p-value
+            # ax_ccdf.text(
+            #     0.97, 0.97,
+            #     f"D = {ks['stat']:.4f}\np = {ks['p']:.2e}  {sig}",
+            #     transform=ax_ccdf.transAxes,
+            #     fontsize=8,
+            #     verticalalignment='top',
+            #     horizontalalignment='right',
+            #     bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+            #               edgecolor='red', alpha=0.75),
+            # )
+
         # Legend only on first row to avoid clutter
         if row == 0:
             ax_pdf.legend()
             ax_ccdf.legend()
- 
-    #plt.tight_layout()
+
     os.makedirs('images', exist_ok=True)
     out_path = os.path.join('images', 'compare_dist_vs_signs_all.png')
     fig.savefig(out_path, dpi=300)
     print(f"[save]  {out_path}")
-    plt.close()
+    plt.show()
 
 
 # ---------------------------------------------------------------------------
 # Style & entry point
 # ---------------------------------------------------------------------------
-
-iterations, data = load_data(results_dir, nb_traders, kind, exponent)
-filename         = build_filename(nb_traders, kind, exponent)
-
-#dist_fit(data, iterations, filename)
-
-bins              = np.arange(1, max(data) + 2)
-counts, bin_edges = np.histogram(data, bins=bins, density=True)
-x_values          = bin_edges[:-1]
-x_ccdf, ccdf      = compute_ccdf(data)
-
-fig, (ax_pdf, ax_ccdf) = plt.subplots(1, 2, figsize=(13, 5.5))
-
-ax_pdf.plot(x_values, counts, color='C0', linestyle='', marker='.', label='PDF Points')
-ax_pdf.set_xscale('log')
-ax_pdf.set_yscale('log')
-ax_pdf.set_xlabel('x')
-ax_pdf.set_ylabel('P(x)')
-ax_pdf.set_title('PDF')
-ax_pdf.grid(True, linewidth=0.5, linestyle='--', alpha=0.6)
-ax_pdf.legend()
-
-ax_ccdf.plot(x_ccdf, ccdf, color='C1', linestyle='', marker='.', label='CCDF Points')
-ax_ccdf.set_xscale('log')
-ax_ccdf.set_yscale('log')
-ax_ccdf.set_xlabel('x')
-ax_ccdf.set_ylabel('P(X ≥ x)')
-ax_ccdf.set_title('CCDF')
-ax_ccdf.grid(True, linewidth=0.5, linestyle='--', alpha=0.6)
-ax_ccdf.legend()
-
-plt.tight_layout()
-plt.close()
-
 plot_all(results_dir)
 
 # --- compare base vs signs for the current configuration ---

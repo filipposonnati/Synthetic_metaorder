@@ -70,7 +70,7 @@ grouped['a_err'] = safe_err(grouped['a_std'],      grouped['sample_count'], grou
 grouped['b_err'] = safe_err(grouped['b_std'],      grouped['sample_count'], grouped['b_mean'])
 
 # Remove non-positive values to allow for correct logarithmic transformation
-grouped = grouped[(grouped['a_mean'] > 0) & (grouped['b_mean'] > 0) & (grouped['impact_mean'])].copy()
+grouped = grouped[(grouped['a_mean'] > 0) & (grouped['b_mean'] > 0) & (grouped['impact_mean'] > 0)].copy()
 
 log_a = np.log10(grouped['a_mean'])
 log_b = np.log10(grouped['b_mean'])
