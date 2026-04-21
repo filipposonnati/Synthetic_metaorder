@@ -4,324 +4,336 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy.optimize import curve_fit
 
-# --- CONFIGURATION AND FILTERING LIMITS ---
-# These limits define the liquidity regime where the power law is most valid
+# --- CONFIGURATION ---
 PATH = 'meta_20_power_2.0.csv'
 DIR = 'database\\meta'
+SAMPLE_THRESHOLD_PCT = 0.1
 
-# Significance filter to exclude bins with very few samples to avoid noise
-SAMPLE_THRESHOLD_PCT = 0.001     
+X_LABEL = 'V/V_D'
+Y_LABEL = 'V/V_P'
 
-# --- MODEL DEFINITIONS ---
+# =============================================================================
+# MODEL DEFINITIONS
+# =============================================================================
 
 def log_function_3_ab(log_x, log_Y, delta, alpha):
     """
-    Linearized Power Law Model where log10(I) equals log10(Y) plus delta times log10(a) plus alpha times log10(b)
-    This translates mathematically to I equals Y times a raised to the delta times b raised to the alpha
+    Linearized Power Law: log10(I) = log10(Y) + delta*log10(a) + alpha*log10(b)
+    Equivalent to: I = Y * a^delta * b^alpha
     """
     log_a, log_b = log_x
     return log_Y + delta * log_a + alpha * log_b
 
+
 def safe_err(std_col, count_col, mean_col, fallback_rel=1.0):
     """
-    Calculates Standard Error as standard deviation divided by the square root of n
-    If a bin has zero or one samples it assigns a fallback relative error to prevent division by zero during fitting
+    Standard error = std / sqrt(n).
+    Assigns a fallback relative error for bins with zero or one sample
+    to prevent division by zero during fitting.
     """
     err = std_col / np.sqrt(count_col)
     bad = (err == 0) | np.isnan(err)
     err[bad] = fallback_rel * mean_col[bad]
     return err
 
-# --- DATA LOADING AND PRE-PROCESSING ---
+# =============================================================================
+# CORE COMPUTATION
+# =============================================================================
 
-synthetic_meta = pd.read_csv(f'{DIR}\\{PATH}', sep=',', parse_dates=['BeginTime', 'EndTime'])
-df_res = synthetic_meta[['MetaVolume', 'TradedVolume', 'MetaImpact']].copy()
+def compute_binned_stats(df, n_bins=31, sample_threshold_pct=SAMPLE_THRESHOLD_PCT):
+    """
+    Perform 2D logarithmic binning on columns 'a' and 'b', then compute
+    per-bin means, standard errors (in linear and log space), and a
+    significance mask.
 
-# Define dimensionless market variables where a is participation rate and b is relative volume
-df_res['a'] = df_res['MetaVolume']# / df_res['TradedVolume']
-df_res['b'] = df_res['TradedVolume']
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain columns 'a', 'b', and 'MetaImpact'.
+    n_bins : int
+        Number of log-spaced bin edges along each axis.
+    sample_threshold_pct : float
+        Bins whose sample count falls below this fraction of the maximum
+        bin count are flagged as insignificant.
 
-x_label = 'V/V_D'
-y_label = 'V_P/V_D'
+    Returns
+    -------
+    grouped : pd.DataFrame
+        Binned statistics with columns:
+        a_mean, a_std, a_err, b_mean, b_std, b_err,
+        impact_mean, impact_std, sample_count, err
+    log_vals : dict
+        Log10-transformed arrays:  log_a, log_b, log_i, zerr, xerr, yerr
+        (computed over ALL significant bins).
+    mask_significance : pd.Series (bool)
+        True for bins that pass the sample-count threshold.
+    """
+    bins_a = np.logspace(np.log10(df['a'].min()), np.log10(df['a'].max()), n_bins)
+    bins_b = np.logspace(np.log10(df['b'].min()), np.log10(df['b'].max()), n_bins)
 
-# --- 2D LOGARITHMIC BINNING ---
-# Create log-spaced bins for each dimension to establish a two-dimensional grid
-bins_a = np.logspace(np.log10(df_res['a'].min()), np.log10(df_res['a'].max()), 31)
-bins_b = np.logspace(np.log10(df_res['b'].min()), np.log10(df_res['b'].max()), 31)
+    df = df.copy()
+    df['bin_a'] = pd.cut(df['a'], bins=bins_a, include_lowest=True)
+    df['bin_b'] = pd.cut(df['b'], bins=bins_b, include_lowest=True)
 
-df_res['bin_a'] = pd.cut(df_res['a'], bins=bins_a, include_lowest=True)
-df_res['bin_b'] = pd.cut(df_res['b'], bins=bins_b, include_lowest=True)
+    grouped = df.groupby(['bin_a', 'bin_b'], observed=True).agg(
+        a_mean=('a', 'mean'), a_std=('a', 'std'),
+        b_mean=('b', 'mean'), b_std=('b', 'std'),
+        impact_mean=('MetaImpact', 'mean'),
+        impact_std=('MetaImpact', 'std'),
+        sample_count=('MetaImpact', 'count'),
+    ).dropna()
 
-df_res_zero = df_res[df_res['a'] == 1]
-#df_res = df_res[df_res['a'] < 1]
+    # Linear-space standard errors
+    grouped['err']   = safe_err(grouped['impact_std'], grouped['sample_count'], grouped['impact_mean'])
+    grouped['a_err'] = safe_err(grouped['a_std'],      grouped['sample_count'], grouped['a_mean'])
+    grouped['b_err'] = safe_err(grouped['b_std'],      grouped['sample_count'], grouped['b_mean'])
 
-# Calculate mean impact and associated errors for each 2D bin
-grouped = df_res.groupby(['bin_a', 'bin_b'], observed=True).agg({
-    'a': ['mean', 'std'],
-    'b': ['mean', 'std'],
-    'MetaImpact': ['mean', 'std', 'count']
-}).dropna()
+    # Keep only positive means (required for log transform)
+    grouped = grouped[
+        (grouped['a_mean'] > 0) &
+        (grouped['b_mean'] > 0) &
+        (grouped['impact_mean'] > 0)
+    ].copy()
 
-grouped.columns = ['a_mean', 'a_std', 'b_mean', 'b_std', 'impact_mean', 'impact_std', 'sample_count']
+    # Significance mask
+    mask_significance = grouped['sample_count'] >= (grouped['sample_count'].max() * sample_threshold_pct)
 
-# Propagate errors for visualization purposes and weighted regression analysis
-grouped['err']   = safe_err(grouped['impact_std'], grouped['sample_count'], grouped['impact_mean'])
-grouped['a_err'] = safe_err(grouped['a_std'],      grouped['sample_count'], grouped['a_mean'])
-grouped['b_err'] = safe_err(grouped['b_std'],      grouped['sample_count'], grouped['b_mean'])
+    # Log10 transforms and log-space error propagation (derivative method)
+    log_a = np.log10(grouped['a_mean'])
+    log_b = np.log10(grouped['b_mean'])
+    log_i = np.log10(grouped['impact_mean'])
 
-# Remove non-positive values to allow for correct logarithmic transformation
-grouped = grouped[(grouped['a_mean'] > 0) & (grouped['b_mean'] > 0) & (grouped['impact_mean'] > 0)].copy()
+    zerr = grouped['err'].values   / (grouped['impact_mean'].values * np.log(10))
+    xerr = grouped['a_err'].values / (grouped['a_mean'].values      * np.log(10))
+    yerr = grouped['b_err'].values / (grouped['b_mean'].values      * np.log(10))
 
-log_a = np.log10(grouped['a_mean'])
-log_b = np.log10(grouped['b_mean'])
-log_i = np.log10(grouped['impact_mean'])
+    log_vals = dict(log_a=log_a, log_b=log_b, log_i=log_i,
+                    zerr=zerr, xerr=xerr, yerr=yerr)
 
-# Transform errors to log-space using the derivative approximation method
-zerr = grouped['err'].values   / (grouped['impact_mean'].values * np.log(10))
-xerr = grouped['a_err'].values / (grouped['a_mean'].values      * np.log(10))
-yerr = grouped['b_err'].values / (grouped['b_mean'].values      * np.log(10))
+    return grouped, log_vals, mask_significance
 
-fig1 = plt.figure(figsize=(12, 10))
-ax1 = fig1.add_subplot(111, projection='3d')
-ax1.dist = 8
 
-ax1.plot_trisurf(
-    log_a, log_b, log_i,
-    cmap='Blues',      # Color of the triangles
-    edgecolor='grey',  # This "connects" the points with lines
-    linewidth=0.3,
-    alpha=0.5
-)
+def iterative_weighted_regression(log_a, log_b, log_i, zerr, xerr, yerr, n_iter=10):
+    """
+    Fit log_function_3_ab using the Effective Variance Method, iterating
+    the sigma estimate until the exponent estimates converge.
 
-# Original scatter — same style as before
-ax1.scatter(log_a, log_b, log_i, marker='.', s=50, alpha=0.8, color='C0')
+    Returns
+    -------
+    log_Y_fit, d_fit, al_fit : float
+        Fitted parameters (Y in log10 space, delta, alpha).
+    """
+    popt = [np.log10(np.median(10 ** log_i)), 0.5, 0.5]
+    for _ in range(n_iter):
+        _, d, al = popt
+        sig_eff = np.sqrt(zerr**2 + (d**2 * xerr**2) + (al**2 * yerr**2))
+        popt, pcov = curve_fit(
+            log_function_3_ab,
+            (log_a, log_b), log_i,
+            p0=popt, sigma=sig_eff, absolute_sigma=True,
+        )
+    return popt, pcov  # [log_Y_fit, d_fit, al_fit]
 
-ax1.set_xlabel(fr'$\log_{{10}}({x_label})$')
-ax1.set_ylabel(fr'$\log_{{10}}({y_label})$')
-ax1.set_zlabel(r'$\log_{10}(I)$')
-ax1.view_init(elev=30, azim=-150)
+# =============================================================================
+# PLOT FUNCTIONS
+# =============================================================================
 
-plt.tight_layout()
-plt.savefig('images\\part_rate\\part_rate_scatter.png', dpi=300, bbox_inches='tight')
-plt.show()
+def plot_scatter_3d(log_a, log_b, log_i, x_label=X_LABEL, y_label=Y_LABEL,
+                    save_path='images\\part_rate\\part_rate_scatter.png'):
+    """
+    3-D trisurf + scatter of the binned log-space data.
 
-# --- VISUALIZATION OF DETAILED 3D HISTOGRAM ---
+    Parameters
+    ----------
+    log_a, log_b, log_i : array-like
+        Log10-transformed bin means for the two predictors and impact.
+    x_label, y_label : str
+        Axis label strings (inserted into LaTeX math mode).
+    save_path : str
+        Output file path.
+    """
+    fig = plt.figure(figsize=(12, 10))
+    ax  = fig.add_subplot(111, projection='3d')
+    ax.dist = 8
 
-n_hist = 25
-log_a_all = np.log10(df_res['a'].to_numpy())
-log_b_all = np.log10(df_res['b'].to_numpy())
+    ax.plot_trisurf(log_a, log_b, log_i,
+                    cmap='Blues', edgecolor='grey', linewidth=0.3, alpha=0.5)
+    ax.scatter(log_a, log_b, log_i, marker='.', s=50, alpha=0.8, color='C0')
 
-# Generate two-dimensional histogram data for density visualization
-counts, x_edges, y_edges = np.histogram2d(log_a_all, log_b_all, bins=n_hist)
+    ax.set_xlabel(fr'$\log_{{10}}({x_label})$')
+    ax.set_ylabel(fr'$\log_{{10}}({y_label})$')
+    ax.set_zlabel(r'$\log_{10}(I)$')
+    ax.view_init(elev=30, azim=-150)
 
-# Prepare grid coordinates for the three-dimensional bar plot
-# Use 'xy' for standard Cartesian alignment
-x_pos, y_pos = np.meshgrid(x_edges[:-1], y_edges[:-1], indexing="xy")
-x_pos, y_pos = x_pos.ravel(), y_pos.ravel()
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
-# You may need to transpose the counts if they look "rotated"
-dz = counts.T.ravel()
 
-dx = (x_edges[1] - x_edges[0]) * 0.85
-dy = (y_edges[1] - y_edges[0]) * 0.85
+def plot_histogram_3d(df, x_label=X_LABEL, y_label=Y_LABEL, n_hist=25,
+                      save_path='images\\part_rate\\part_rate_hist.png'):
+    """
+    3-D bar chart showing the sample density across the (log_a, log_b) plane.
 
-fig2 = plt.figure(figsize=(14, 10))
-ax2  = fig2.add_subplot(111, projection='3d')
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw data with columns 'a' and 'b'.
+    n_hist : int
+        Number of histogram bins along each axis.
+    """
+    log_a_all = np.log10(df['a'].to_numpy())
+    log_b_all = np.log10(df['b'].to_numpy())
 
-# Apply the Turbo colormap to effectively highlight sample density peaks
-norm = plt.Normalize(dz[dz > 0].min(), dz.max())
-colors = plt.cm.turbo(norm(dz))
+    counts, x_edges, y_edges = np.histogram2d(log_a_all, log_b_all, bins=n_hist)
 
-ax2.bar3d(x_pos, y_pos, 0, dx, dy, dz, color=colors, alpha=0.85, shade=True)
+    x_pos, y_pos = np.meshgrid(x_edges[:-1], y_edges[:-1], indexing='xy')
+    x_pos, y_pos = x_pos.ravel(), y_pos.ravel()
+    dz = counts.T.ravel()
 
-# Create a matching colorbar to indicate frequency levels
-mappable = cm.ScalarMappable(norm=norm, cmap=plt.cm.turbo)
-mappable.set_array(dz)
-fig2.colorbar(mappable, ax=ax2, shrink=0.5, aspect=10, pad=0.1, label='Sample Density')
+    dx = (x_edges[1] - x_edges[0]) * 0.85
+    dy = (y_edges[1] - y_edges[0]) * 0.85
 
-ax2.set_xlabel(rf'$\log_{{10}}({x_label})$')
-ax2.set_ylabel(rf'$\log_{{10}}({y_label})$')
-ax2.set_zlabel('Frequency')
-ax2.view_init(elev=30, azim=-135)
+    norm   = plt.Normalize(dz[dz > 0].min(), dz.max())
+    colors = plt.cm.turbo(norm(dz))
 
-plt.savefig('images\\part_rate\\part_rate_hist.png', bbox_inches='tight')
-plt.show()
+    fig = plt.figure(figsize=(14, 10))
+    ax  = fig.add_subplot(111, projection='3d')
+    ax.bar3d(x_pos, y_pos, 0, dx, dy, dz, color=colors, alpha=0.85, shade=True)
 
-# --- VISUALIZATION OF HISTOGRAM PROJECTION ---
+    mappable = cm.ScalarMappable(norm=norm, cmap=plt.cm.turbo)
+    mappable.set_array(dz)
+    fig.colorbar(mappable, ax=ax, shrink=0.5, aspect=10, pad=0.1, label='Sample Density')
 
-# Reconstruct the two-dimensional grid for the heatmap visualization
-unique_x, unique_y = np.unique(x_pos), np.unique(y_pos)
-dz_grid = dz.reshape(len(unique_y), len(unique_x))
-X_grid, Y_grid = np.meshgrid(np.append(unique_x, unique_x[-1] + (x_edges[1]-x_edges[0])), 
-                             np.append(unique_y, unique_y[-1] + (y_edges[1]-y_edges[0])))
+    ax.set_xlabel(rf'$\log_{{10}}({x_label})$')
+    ax.set_ylabel(rf'$\log_{{10}}({y_label})$')
+    ax.set_zlabel('Frequency')
+    ax.view_init(elev=30, azim=-150)
 
-fig3, ax3 = plt.subplots(figsize=(10, 8))
-im = ax3.pcolormesh(X_grid, Y_grid, dz_grid, cmap='turbo', shading='auto')
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
 
-ax3.set_xlabel(rf'$\log_{{10}}({x_label})$')
-ax3.set_ylabel(rf'$\log_{{10}}({y_label})$')
-fig3.colorbar(im, ax=ax3, label='Frequency')
 
-plt.savefig('images\\part_rate\\part_rate_hist_2d.png', dpi=300, bbox_inches='tight')
-plt.close()
+def plot_histogram_2d(df, x_label=X_LABEL, y_label=Y_LABEL, n_hist=25,
+                      save_path='images\\part_rate\\part_rate_hist_2d.png'):
+    """
+    2-D heatmap (pcolormesh) projection of the sample density.
 
-# --- REGRESSION PREPARATION AND FILTERING ---
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw data with columns 'a' and 'b'.
+    n_hist : int
+        Number of histogram bins along each axis.
+    """
+    log_a_all = np.log10(df['a'].to_numpy())
+    log_b_all = np.log10(df['b'].to_numpy())
 
-# Filter individual bins based on regime limits and statistical significance
-max_samples = grouped['sample_count'].max()
-mask_significance = (grouped['sample_count'] >= (max_samples * SAMPLE_THRESHOLD_PCT))
+    counts, x_edges, y_edges = np.histogram2d(log_a_all, log_b_all, bins=n_hist)
 
-grouped_fit = grouped[mask_significance].copy()
+    x_pos, y_pos = np.meshgrid(x_edges[:-1], y_edges[:-1], indexing='xy')
+    x_pos, y_pos = x_pos.ravel(), y_pos.ravel()
+    dz = counts.T.ravel()
 
-# Prepare necessary variables for the curve fitting process
-a_f, b_f, i_f = grouped_fit['a_mean'].values, grouped_fit['b_mean'].values, grouped_fit['impact_mean'].values
-log_a_f, log_b_f, log_i_f = np.log10(a_f), np.log10(b_f), np.log10(i_f)
-zerr_f = zerr[mask_significance]
-xerr_f = xerr[mask_significance]
-yerr_f = yerr[mask_significance]
+    unique_x = np.unique(x_pos)
+    unique_y = np.unique(y_pos)
+    dz_grid  = dz.reshape(len(unique_y), len(unique_x))
 
-# --- ITERATIVE WEIGHTED REGRESSION ---
+    X_grid, Y_grid = np.meshgrid(
+        np.append(unique_x, unique_x[-1] + (x_edges[1] - x_edges[0])),
+        np.append(unique_y, unique_y[-1] + (y_edges[1] - y_edges[0])),
+    )
 
-# Initial guesses for the model parameters
-popt = [np.log10(np.median(i_f)), 0.5, 0.5] 
+    fig, ax = plt.subplots(figsize=(10, 8))
+    im = ax.pcolormesh(X_grid, Y_grid, dz_grid, cmap='turbo', shading='auto')
 
-for _ in range(10):
-    _, d, al = popt
-    # Effective Variance Method including errors from all three axes
-    sig_eff = np.sqrt(zerr_f**2 + (d**2 * xerr_f**2) + (al**2 * yerr_f**2))
-    popt, _ = curve_fit(log_function_3_ab, (log_a_f, log_b_f), log_i_f, p0=popt, sigma=sig_eff, absolute_sigma=True)
+    ax.set_xlabel(rf'$\log_{{10}}({x_label})$')
+    ax.set_ylabel(rf'$\log_{{10}}({y_label})$')
+    fig.colorbar(im, ax=ax, label='Frequency')
 
-log_Y_fit, d_fit, al_fit = popt
-print(f"Fit Results: Y={10**log_Y_fit:.4g}, delta={d_fit:.4f}, alpha={al_fit:.4f}")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
-# --- VISUALIZATION OF FINAL MODEL SURFACE ---
-# 1. Use the actual filtered data limits for the surface
-a_range = np.linspace(log_a_f.min(), log_a_f.max(), 10)
-b_range = np.linspace(log_b_f.min(), log_b_f.max(), 10)
-a_s, b_s = np.meshgrid(a_range, b_range)
 
-# 2. Re-calculate Z based on your mesh
-z_s = log_Y_fit + d_fit * a_s + al_fit * b_s
+def plot_fit_surface(log_a_f, log_b_f, log_i_f, log_Y_fit, d_fit, al_fit,
+                     x_label=X_LABEL, y_label=Y_LABEL,
+                     save_path='images\\part_rate\\part_rate_fit.png'):
+    """
+    3-D scatter of the regression data overlaid with the fitted power-law surface.
 
-fig4 = plt.figure(figsize=(12, 10))
-ax4 = fig4.add_subplot(111, projection='3d')
+    Parameters
+    ----------
+    log_a_f, log_b_f, log_i_f : ndarray
+        Log10 data used for fitting (significance-filtered).
+    log_Y_fit, d_fit, al_fit : float
+        Parameters returned by iterative_weighted_regression.
+    """
+    a_range = np.linspace(log_a_f.min(), log_a_f.max(), 10)
+    b_range = np.linspace(log_b_f.min(), log_b_f.max(), 10)
+    a_s, b_s = np.meshgrid(a_range, b_range)
+    z_s = log_Y_fit + d_fit * a_s + al_fit * b_s
 
-# Plot data points - use a darker color so they pop through the surface
-ax4.scatter(log_a_f, log_b_f, log_i_f, marker='o', s=30, alpha=0.8, color='#1f77b4', linewidth=0.5)
+    fig = plt.figure(figsize=(12, 10))
+    ax  = fig.add_subplot(111, projection='3d')
 
-# IMPROVED SURFACE
-ax4.plot_surface(a_s, b_s, z_s, 
-                 color='gray',       # Use a neutral color like gray or lightblue
-                 alpha=0.25,         # Very faint
-                 linewidth=0,        # CRITICAL: removes the blocky grid lines
-                 antialiased=True, 
-                 shade=False,        # Keeps the transparency uniform
-                 zorder=0)           # Attempts to push the surface behind points
+    ax.scatter(log_a_f, log_b_f, log_i_f,
+               marker='o', s=30, alpha=0.8, color='#1f77b4', linewidth=0.5)
+    ax.plot_surface(a_s, b_s, z_s,
+                    color='gray', alpha=0.25, linewidth=0,
+                    antialiased=True, shade=False, zorder=0)
 
-# 3. Clean up the "Box" appearance
-ax4.set_xlabel(rf'$\log_{{10}}({x_label})$')
-ax4.set_ylabel(rf'$\log_{{10}}({y_label})$')
-ax4.set_zlabel(r'$\log_{10}(I)$')
+    ax.set_xlabel(rf'$\log_{{10}}({x_label})$')
+    ax.set_ylabel(rf'$\log_{{10}}({y_label})$')
+    ax.set_zlabel(r'$\log_{10}(I)$')
 
-# Make panes transparent for a modern look
-ax4.xaxis.pane.fill = False
-ax4.yaxis.pane.fill = False
-ax4.zaxis.pane.fill = False
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    ax.view_init(elev=15, azim=120)
 
-ax4.view_init(elev=15, azim=20)
-plt.savefig('images\\part_rate\\part_rate_fit.png', dpi=300, bbox_inches='tight')
-plt.show()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
-"""
-# --- FIT AND PLOT FOR DATA AT THE BORDER ---
+if __name__ == '__main__':
+    # --- Load and prepare raw data ---
+    synthetic_meta = pd.read_csv(
+        f'{DIR}\\{PATH}', sep=',', parse_dates=['BeginTime', 'EndTime']
+    )
+    df_res = synthetic_meta[['MetaVolume', 'TradedVolume', 'MetaImpact', 'NbChild']].copy()
+    df_res = df_res[df_res['NbChild'] > 1]
+    df_res['a'] = df_res['MetaVolume']   # participation rate axis
+    df_res['b'] = df_res['MetaVolume'] / df_res['TradedVolume'] # relative volume axis
 
-# --- FIT AND PLOT FOR DATA AT THE BORDER ---
-# The high participation rate regime (log_a > LOG_A_MAX) covers a very narrow
-# range of a, so the original coarse 31-bin grid yields too few populated bins.
-# We rebin the raw data directly within this regime using a denser grid.
- 
-# 1. Isolate the raw rows that belong to the high-a regime
-df_high = df_res[np.log10(df_res['a']) > LOG_A_MAX].copy()
- 
-# 2. Build a denser log-spaced grid tailored to this narrow a-range
-N_BINS_HIGH_A = 20   # finer in the participation-rate direction
-N_BINS_HIGH_B = 100   # keep reasonable resolution in the volume direction
- 
-bins_a_h = np.logspace(np.log10(df_high['a'].min()), np.log10(df_high['a'].max()), N_BINS_HIGH_A + 1)
-bins_b_h = np.logspace(np.log10(df_high['b'].min()), np.log10(df_high['b'].max()), N_BINS_HIGH_B + 1)
- 
-df_high['bin_a'] = pd.cut(df_high['a'], bins=bins_a_h, include_lowest=True)
-df_high['bin_b'] = pd.cut(df_high['b'], bins=bins_b_h, include_lowest=True)
- 
-grouped_high = df_high.groupby(['bin_a', 'bin_b'], observed=True).agg({
-    'a': ['mean', 'std'],
-    'b': ['mean', 'std'],
-    'MetaImpact': ['mean', 'std', 'count']
-}).dropna()
-grouped_high.columns = ['a_mean', 'a_std', 'b_mean', 'b_std', 'impact_mean', 'impact_std', 'sample_count']
- 
-# 3. Apply the same significance filter as before (relative to this sub-dataset)
-max_samples_h = grouped_high['sample_count'].max()
-mask_sig_h    = grouped_high['sample_count'] >= (max_samples_h * SAMPLE_THRESHOLD_PCT)
-grouped_high  = grouped_high[mask_sig_h].copy()
- 
-# 4. Compute errors for the dense bins
-grouped_high['err']   = safe_err(grouped_high['impact_std'], grouped_high['sample_count'], grouped_high['impact_mean'])
-grouped_high['a_err'] = safe_err(grouped_high['a_std'],      grouped_high['sample_count'], grouped_high['a_mean'])
-grouped_high['b_err'] = safe_err(grouped_high['b_std'],      grouped_high['sample_count'], grouped_high['b_mean'])
- 
-# 5. Prepare log-space arrays and propagate errors
-a_h, b_h, i_h = grouped_high['a_mean'].values, grouped_high['b_mean'].values, grouped_high['impact_mean'].values
-log_a_h = np.log10(a_h)
-log_b_h = np.log10(b_h)
-log_i_h = np.log10(i_h)
- 
-zerr_h = grouped_high['err'].values   / (i_h * np.log(10))
-xerr_h = grouped_high['a_err'].values / (a_h  * np.log(10))
-yerr_h = grouped_high['b_err'].values / (b_h  * np.log(10))
- 
-# 6. Iterative Weighted Regression on the dense bins
-popt_h = [np.log10(np.median(i_h)), 0.5, 0.5]
-for _ in range(10):
-    _, d_h, al_h = popt_h
-    sig_eff_h = np.sqrt(zerr_h**2 + (d_h**2 * xerr_h**2) + (al_h**2 * yerr_h**2))
-    popt_h, _ = curve_fit(log_function_3_ab, (log_a_h, log_b_h), log_i_h,
-                          p0=popt_h, sigma=sig_eff_h, absolute_sigma=True)
- 
-log_Y_h, d_h, al_h = popt_h
-print(f"High Participation Fit (log_a > {LOG_A_MAX}, dense rebin {N_BINS_HIGH_A}x{N_BINS_HIGH_B}): "
-      f"Y={10**log_Y_h:.4g}, delta={d_h:.4f}, alpha={al_h:.4f}")
- 
-# --- PLOTTING ---
-fig6 = plt.figure(figsize=(12, 10))
-ax6  = fig6.add_subplot(111, projection='3d')
- 
-# Scatter the densely-rebinned data points with error bars
-ax6.scatter(log_a_h, log_b_h, log_i_h, marker='o', s=30, alpha=0.8, color='#1f77b4')
-for xi, yi, zi, xe, ye, ze in zip(log_a_h, log_b_h, log_i_h, xerr_h, yerr_h, zerr_h):
-    ax6.plot([xi-xe, xi+xe], [yi, yi],     [zi, zi],     lw=0.6, alpha=0.5, color='steelblue')
-    ax6.plot([xi, xi],       [yi-ye, yi+ye],[zi, zi],     lw=0.6, alpha=0.5, color='steelblue')
-    ax6.plot([xi, xi],       [yi, yi],     [zi-ze, zi+ze],lw=0.6, alpha=0.5, color='steelblue')
- 
-# Generate fitted surface over the dense data extent
-a_range_h = np.linspace(log_a_h.min(), log_a_h.max(), 25)
-b_range_h = np.linspace(log_b_h.min(), log_b_h.max(), 25)
-A_h, B_h  = np.meshgrid(a_range_h, b_range_h)
-Z_h       = log_Y_h + d_h * A_h + al_h * B_h
- 
-ax6.plot_surface(A_h, B_h, Z_h,
-                 color='gray', alpha=0.20,
-                 linewidth=0, antialiased=True, shade=False, zorder=0)
- 
-ax6.set_xlabel(r'$\log_{10}(V/V_P)$')
-ax6.set_ylabel(r'$\log_{10}(V_P/V_D)$')
-ax6.set_zlabel(r'$\log_{10}(I)$')
-ax6.xaxis.pane.fill = False
-ax6.yaxis.pane.fill = False
-ax6.zaxis.pane.fill = False
-ax6.view_init(elev=30, azim=-110)
- 
-plt.tight_layout()
-plt.savefig('images\\part_rate\\part_rate_fit_2.png', dpi=300, bbox_inches='tight')
-plt.show()
-"""
+    # --- Compute binned statistics and log-space errors ---
+    grouped, log_vals, mask_significance = compute_binned_stats(df_res, n_bins=31)
+
+    log_a = log_vals['log_a']
+    log_b = log_vals['log_b']
+    log_i = log_vals['log_i']
+    zerr  = log_vals['zerr']
+    xerr  = log_vals['xerr']
+    yerr  = log_vals['yerr']
+
+    # --- Plots over all bins ---
+    plot_scatter_3d(log_a, log_b, log_i)
+    plot_histogram_3d(df_res)
+    plot_histogram_2d(df_res)
+
+    # --- Regression on significance-filtered bins ---
+    log_a_f = log_a[mask_significance].values
+    log_b_f = log_b[mask_significance].values
+    log_i_f = log_i[mask_significance].values
+    zerr_f  = zerr[mask_significance]
+    xerr_f  = xerr[mask_significance]
+    yerr_f  = yerr[mask_significance]
+
+    popt, pcov = iterative_weighted_regression(
+        log_a_f, log_b_f, log_i_f, zerr_f, xerr_f, yerr_f
+    )
+
+    log_Y_fit, d_fit, al_fit = popt
+    log_Y_err, d_err, al_err = np.sqrt(np.diag(pcov))
+
+    print(f"Fit Results:\nY={10**log_Y_fit:.4g} +- {np.log(10) * 10**log_Y_fit * log_Y_err:.4f}\ndelta={d_fit:.4f} +- {d_err:.4f}\nalpha={al_fit:.4f} +- {al_err:.4f}")
+
+    plot_fit_surface(log_a_f, log_b_f, log_i_f, log_Y_fit, d_fit, al_fit)
