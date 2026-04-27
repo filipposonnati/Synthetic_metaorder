@@ -195,8 +195,8 @@ plt.grid(True, which="both", ls="-", alpha=0.2)
 plt.tight_layout()
 
 # Salvataggio in alta risoluzione
-plt.savefig('images\\square_root_verify.png', dpi=300, bbox_inches='tight')
-#plt.show()
+#plt.savefig('images\\square_root_verify.png', dpi=300, bbox_inches='tight')
+plt.show()
 
 
 

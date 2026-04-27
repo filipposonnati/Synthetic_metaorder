@@ -1,140 +1,192 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from os import listdir
-
+import matplotlib.cm as cm
 from scipy.optimize import curve_fit
-import scipy.stats as stats
+
+# Global Plot Configuration
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.titlesize': 20,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 14
+})
 
 def power_law(x, Y, delta):
     return Y * x**delta
 
-plt.rcParams.update({
-    'font.size': 12,          # Dimensione base per tutto il testo
-    'axes.titlesize': 20,     # Titolo
-    'axes.labelsize': 16,     # Etichette assi
-    'xtick.labelsize': 12,    # Numeri asse X
-    'ytick.labelsize': 12,    # Numeri asse Y
-    'legend.fontsize': 14     # Legenda
-})
+def robust_power_law_fit(x, y, x_err, y_err, sample_count):
+    """
+    Performs an iterative power-law fit on the 'core' high-density data.
+    """
+    # 1. Identify high-density core
+    core_mask = sample_count > (0.5 * sample_count.max())
+    xc, yc = x[core_mask], y[core_mask]
+    xerr_c, yerr_c = x_err[core_mask], y_err[core_mask]
 
-model = 'ar_1000'
-model = ''
-function = '20_power_2.0.csv'
+    if len(xc) < 2:
+        return None
 
-path = 'meta_' + function
+    try:
+        # Initial fit ignoring errors
+        popt, _ = curve_fit(power_law, xc, yc, maxfev=5000)
+        Y, delta = popt
 
-print(path)
+        # Iterative fit propagating X and Y errors into effective sigma
+        for _ in range(10):
+            eff_err = np.sqrt(yerr_c**2 + (Y * delta * xc**(delta - 1) * xerr_c)**2)
+            popt, pcov = curve_fit(power_law, xc, yc, sigma=eff_err, absolute_sigma=True, maxfev=5000)
+            Y, delta = popt
+        
+        return Y, delta, np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1])
+    except:
+        return None
 
-dir = 'database\\meta_' + model if model else 'database\\meta'
+def bin_data(df, n_bins=51):
+    """Common logic to bin MetaVolume and calculate stats."""
+    v_min, v_max = df['MetaVolume'].min(), df['MetaVolume'].max()
+    if v_min <= 0 or v_max <= 0 or v_min == v_max:
+        return None
+    
+    bins = np.logspace(np.log10(v_min), np.log10(v_max), n_bins)
+    df = df.copy()
+    df['bin'] = pd.cut(df['MetaVolume'], bins=bins, include_lowest=True)
+    
+    grouped = df.groupby('bin', observed=True).agg({
+        'MetaVolume': ['mean', 'std'],
+        'MetaImpact': ['mean', 'std', 'count']
+    }).dropna()
+    
+    grouped.columns = ['x', 'x_std', 'y', 'y_std', 'count']
+    # Calculate Standard Error of the Mean
+    grouped['x_err'] = grouped['x_std'] / np.sqrt(grouped['count'])
+    grouped['y_err'] = grouped['y_std'] / np.sqrt(grouped['count'])
+    
+    return grouped, bins
 
-print(dir)
+def plot_aggregate_impact(df, image_name, n_bins=51):
+    """Part 1: Single aggregate plot."""
+    res = bin_data(df, n_bins)
+    if res is None: return
+    grouped, bins = res
+    
+    fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
+    
+    fig, ax1 = plt.subplots(figsize=(8, 6))
+    ax2 = ax1.twinx()
+    ax1.set_xscale("log"); ax1.set_yscale("log")
+    ax1.set_xlabel(r'$Q$'); ax1.set_ylabel(r'$I(Q)$')
+    ax2.set_ylabel('Frequency')
+    
+    # Data and Hist
+    ax2.hist(df['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
+    ax1.errorbar(grouped['x'], grouped['y'], xerr=grouped['x_err'], yerr=grouped['y_err'], 
+                 marker='o', linestyle="", color='C0', label="Binned data")
+    
+    if fit:
+        Y, delta, Y_err, delta_err = fit
+        x_line = np.logspace(np.log10(grouped['x'].min()), np.log10(grouped['x'].max()), 100)
+        ax1.plot(x_line, power_law(x_line, Y, delta), 'k--', label='Fitted curve')
+        print(f"Aggregate Fit: Y={Y:.4e}, delta={delta:.4f}")
 
-image_name = 'impact_volume_dist_curve_' + model + '_' + function if model else 'impact_volume_dist_curve_' + function
+    ax1.legend()
+    plt.tight_layout()
+    plt.savefig(f'images\\{image_name}.png')
+    plt.show()
 
-synthetic_meta = pd.read_csv(
-    f'{dir}\\{path}', 
-    sep=',',  # Usa il tabulatore (o cambia in ',' se il tuo file è un CSV standard)
-    parse_dates=['BeginTime', 'EndTime'] # Carica queste colonne come datetime
-)
+def plot_stratified_impact(df, image_name, n_bins=51):
+    """Part 2: 10 subplots (2 columns x 5 rows) stratified by NbChild."""
+    child_range = range(2, 12)
+    colors = dict(zip(child_range, cm.tab10(np.linspace(0, 1, len(child_range)))))
+    
+    fig, axes = plt.subplots(5, 2, figsize=(14, 22))
+    axes_flat = axes.flatten()
+    
+    for i, nb in enumerate(child_range):
+        ax1 = axes_flat[i]
+        subset = df[df['NbChild'] == nb]
+        
+        if subset.empty or len(subset) < 10:
+            ax1.text(0.5, 0.5, f"NbChild={nb}: Insufficient Data", ha='center')
+            continue
+            
+        res = bin_data(subset, n_bins)
+        if res is None: continue
+        grouped, bins = res
+        
+        ax2 = ax1.twinx()
+        ax1.set_xscale('log'); ax1.set_yscale('log')
+        #ax1.set_title(rf'$N_c = {nb}$ ($n={len(subset):,}$, bins={len(grouped)})$', fontsize=13)
+        
+        # Plotting
+        ax2.hist(subset['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
+        ax1.errorbar(grouped['x'], grouped['y'], xerr=grouped['x_err'], yerr=grouped['y_err'],
+                     marker='o', linestyle='', color=colors[nb], markersize=4, label='Binned data')
+        
+        fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
+        if fit:
+            Y, delta, Ye, de = fit
+            xl = np.logspace(np.log10(grouped['x'].min()), np.log10(grouped['x'].max()), 100)
+            ax1.plot(xl, power_law(xl, Y, delta), 'k--', linewidth=1.5, 
+                     label=rf'$Y={Y:.2e}, \delta={delta:.3f} \pm {de:.3f}$')
+            
+            print(f'{nb} {Y:.3f} +- {Ye:.3f}, {delta:.2f} +- {de:.2f}')
+        
+        ax1.legend(loc='upper left', fontsize=9)
 
-# 1. Preparazione del DataFrame
-# Selezioniamo e rinominiamo le colonne per coerenza con la logica fornita.
-# Inoltre, filtriamo i volumi non positivi, necessari per la scala logaritmica.
-df_res = synthetic_meta[['MetaVolume', 'MetaImpact', 'NbChild']].copy()
-df_res = df_res[df_res['NbChild'] > 1]
+        # KEY CHANGE: Only show x-label on the bottom row (indices 8 and 9)
+        if i >= 8:
+            ax1.set_xlabel(r'$Q$')
+        else:
+            ax1.set_xlabel('')
+            
+        # Optional: Hide y-labels on the right column for even more space
+        if i % 2 != 0:
+            ax1.set_ylabel('')
+        else:
+            ax1.set_ylabel(r'$I(Q)$')
 
-# 2. Creazione dei Bin Logaritmici
-# Determiniamo il range
-min = df_res['MetaVolume'].min()
-max = df_res['MetaVolume'].max()
+    #fig.suptitle('Market Impact vs. Volume — Stratified by $N_c$', fontsize=20, y=1.01)
+    plt.tight_layout()
+    plt.savefig(f'images\\{image_name}.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
-bins = np.logspace(np.log10(min), np.log10(max), 51)
+if __name__ == "__main__":
+    # 1. Configurazione nomi
+    model = '' 
+    file_name_con_estensione = '20_power_2.0.csv'
+    # Rimuoviamo .csv per i titoli dei grafici e i nomi dei file immagine
+    function_clean = file_name_con_estensione.replace('.csv', '')
 
-# 3. Assegnazione dei metaordini ai Bin
-# 'include_lowest=True' assicura che il valore minimo sia incluso.
-df_res['bin'] = pd.cut(df_res['MetaVolume'], bins=bins, include_lowest=True)
+    # 2. Path per il CARICAMENTO (deve avere il .csv)
+    folder_prefix = f"meta_{model}" if model else "meta"
+    path_caricamento = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
 
-# 4. Raggruppamento e Calcolo delle Medie
-# 'observed=True' è consigliato per le versioni recenti di Pandas quando si raggruppa con pd.cut
-grouped = df_res.groupby('bin', observed=True).agg({
-    'MetaVolume': ['mean', 'std'], # Volume medio per rappresentare il centro del bin
-    'MetaImpact': ['mean', 'std', 'count']  # Impatto medio sul prezzo
-}).dropna() # Rimuove i bin che non contengono dati
+    # 3. Path per il SALVATAGGIO (regola: prefisso_nbchild_nome)
+    img_prefix = f"impact_volume_dist_curve_{model + '_' if model else ''}"
+    
+    # Nome per il plot aggregato: impact_volume_dist_curve_20_power_2.0.png
+    nome_img_aggregato = f"{img_prefix}{function_clean}"
+    
+    # Nome per il plot stratificato: impact_volume_dist_curve_nbchild_20_power_2.0.png
+    nome_img_stratificato = f"{img_prefix}nbchild_{function_clean}"
 
-grouped.columns = ['MetaVolume_mean', 'MetaVolume_std', 'MetaImpact_mean', 'MetaImpact_std', 'sample_count']
+    # Esecuzione
+    try:
+        data = pd.read_csv(path_caricamento, parse_dates=['BeginTime', 'EndTime'])
+        df_clean = data[data['NbChild'] > 1].copy()
 
-# 5. Estrazione degli Array di Risultato
-x = grouped['MetaVolume_mean'].to_numpy()
-y = grouped['MetaImpact_mean'].to_numpy()
+        # Parte 1
+        print(f"Generazione grafico aggregato: {nome_img_aggregato}")
+        plot_aggregate_impact(df_clean, nome_img_aggregato)
 
-x_err = grouped['MetaVolume_std'].to_numpy() / np.sqrt(grouped['sample_count'].to_numpy())
-y_err = grouped['MetaImpact_std'].to_numpy() / np.sqrt(grouped['sample_count'].to_numpy())
-
-# 1. Trova il "core" ad altissima densità per il fit preliminare
-# Usiamo i bin che hanno almeno il 10% del numero massimo di sample
-max_samples = grouped['sample_count'].max()
-core_mask = grouped['sample_count'] > (0.5 * max_samples)
-
-x_core = x[core_mask]
-y_core = y[core_mask]
-x_err_core = x_err[core_mask]
-y_err_core = y_err[core_mask]
-
-# Fit preliminare sul core robusto
-popt, pcov = curve_fit(power_law, x_core, y_core)
-
-Y = popt[0]
-delta = popt[1]
-Y_err = np.sqrt(pcov[0][0])
-delta_err = np.sqrt(pcov[1][1])
-
-print(f'Fit (no err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
-
-popt, pcov = curve_fit(power_law, x_core, y_core, sigma=y_err_core, absolute_sigma=True)
-
-Y = popt[0]
-delta = popt[1]
-Y_err = np.sqrt(pcov[0][0])
-delta_err = np.sqrt(pcov[1][1])
-
-print(f'Fit (y err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
-
-for i in range(10):
-    err_core = np.sqrt(y_err_core**2 + (Y * delta * x_core**(delta - 1) * x_err_core)**2)
-    popt, pcov = curve_fit(power_law, x_core, y_core, sigma=err_core, absolute_sigma=True)
-
-    Y = popt[0]
-    delta = popt[1]
-    Y_err = np.sqrt(pcov[0][0])
-    delta_err = np.sqrt(pcov[1][1])
-
-print(f'Fit (eff err): Y = {Y} +- {Y_err}, delta = {delta} +- {delta_err}')
-
-fig, ax1 = plt.subplots(figsize=(8, 6))
-ax2 = ax1.twinx()
-
-ax1.set_xscale("log")
-ax1.set_yscale("log")
-
-x_theoretical = np.linspace(1e-7, 0.1, 2)
-
-ax1.set_xlabel(r'$Q$')
-ax1.set_ylabel(r'$I(Q)$')
-
-ax1.grid(True, which="major", ls="-", alpha=0.5)
-
-ax2.set_ylabel('Frequency')
-
-ax2.hist(df_res['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
-
-ax1.errorbar(x, y, yerr=y_err, xerr=x_err, marker='o', linestyle="", color='C0', label="Binned data")
-
-ax1.plot(x_theoretical, power_law(x_theoretical, Y, delta), label=r'Fitted curve', linestyle='--', color="black")
-
-ax1.legend()
-
-plt.tight_layout()
-
-plt.savefig(f'images\\{image_name}.png')
-#plt.show()
+        # Parte 2
+        print(f"Generazione grafico stratificato: {nome_img_stratificato}")
+        plot_stratified_impact(df_clean, nome_img_stratificato)
+        
+    except FileNotFoundError:
+        print(f"Errore: Non trovo il file CSV al percorso: {path_caricamento}")
+    except Exception as e:
+        print(f"Si è verificato un errore: {e}")
