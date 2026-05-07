@@ -144,6 +144,69 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
 
     return metaorders_agg, sorted_trades
 
+def generate_slim(path, nb_traders, kind, exponent, data_dir='database\\data'):
+    """
+    Lightweight version of generate() that returns only the three columns
+    needed for the impact/volume study: MetaVolume, MetaImpact, NbChild.
+ 
+    Skips all partial-impact, partial-volume, and time-series bookkeeping,
+    so memory and CPU usage scale much better when collecting large samples.
+    """
+    trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
+    t = np.array(trades[0])
+ 
+    year, month, day = path[5:9], path[10:12], path[13:15]
+    start_of_day_dt = pd.to_datetime(f"{year}-{month}-{day}")
+    timestamp = start_of_day_dt + pd.to_timedelta(t, unit='s')
+ 
+    prices  = np.array(trades[1])
+    volumes = np.array(trades[2])
+    signs   = np.array(trades[3])
+ 
+    trades = pd.DataFrame({
+        'timestamp': timestamp,
+        'sign':      signs,
+        'quantity':  volumes,
+        'price':     prices,
+    })
+    trades['day'] = trades['timestamp'].dt.date
+    trades.sort_values('timestamp', inplace=True)
+ 
+    # Daily normalisation factors
+    daily_stats = trades.groupby('day').agg(
+        DailySigma=('price',    lambda x: (x.max() - x.min()) / x.iloc[0]),
+        DailyVolume=('quantity', 'sum'),
+    ).reset_index()
+    trades = trades.merge(daily_stats, on='day', how='left')
+ 
+    # Normalised price (only first/last per metaorder needed)
+    trades['Mid']    = np.log(trades['price']) / trades['DailySigma']
+    trades['Volume'] = trades['quantity'] / trades['DailyVolume']
+ 
+    # Assign traders and build metaorder ids
+    trades['trader'] = mapping_function(trades, nb_traders, kind, exponent)
+    trades = trades.sort_values(['trader', 'timestamp']).reset_index(drop=True)
+ 
+    trades['metaid'] = np.where(
+        (trades['trader'] != trades['trader'].shift()) |
+        (trades['sign']   != trades['sign'].shift())   |
+        (trades['day']    != trades['day'].shift()),
+        1, 0
+    ).cumsum()
+ 
+    # Aggregate: only what is needed
+    agg = trades.groupby('metaid').agg(
+        sign       =('sign',      'first'),
+        BeginMid   =('Mid',       'first'),
+        EndMid     =('Mid',       'last'),
+        MetaVolume =('Volume',    'sum'),
+        NbChild    =('trader',    'count'),
+    ).reset_index(drop=True)
+ 
+    agg['MetaImpact'] = (agg['EndMid'] - agg['BeginMid']) * agg['sign']
+ 
+    return agg[['MetaVolume', 'MetaImpact', 'NbChild']]
+
 def mapping_function(trades, nb_traders, kind, alpha = 0.0):
     if kind == 'power':
         shape = float(alpha) if float(alpha) > 0 else 1.5
