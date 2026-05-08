@@ -167,3 +167,17 @@ results = study_alpha_traders(
     fit_start_lag=50,
     save_path="images\\lmf_study.png",
 )
+
+alphas        = [1.5]
+n_traders_list = [1, 5, 50]
+total_steps   = 100_000_000
+max_lag       = 1000
+
+results = study_alpha_traders(
+    alphas=alphas,
+    n_traders_list=n_traders_list,
+    total_steps=total_steps,
+    max_lag=max_lag,
+    fit_start_lag=50,
+    save_path="images\\lmf_study_1.png",
+)
