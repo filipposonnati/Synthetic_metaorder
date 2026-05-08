@@ -6,7 +6,7 @@ from scipy.optimize import curve_fit
 def power_law(x, constant, alpha):
     return constant * x**alpha
 
-def simulate_lillo_farmer_multi_trader(alpha, n_traders, total_steps):
+def simulate_lmf(alpha, n_traders, total_steps):
     """
     Advanced simulation: pool of traders with overlapping metaorders.
     """
@@ -35,7 +35,7 @@ def simulate_lillo_farmer_multi_trader(alpha, n_traders, total_steps):
     return order_flow
 
 
-def study_alpha_traders(
+def plot(
     alphas,
     n_traders_list,
     total_steps=5_000_000,
@@ -154,12 +154,13 @@ def study_alpha_traders(
 
 
 # --- Study parameters ---
+"""
 alphas        = [1.2, 1.5, 1.8]
 n_traders_list = [10, 20, 40]
-total_steps   = 100_000_000
+total_steps   = 10_000_000
 max_lag       = 1000
 
-results = study_alpha_traders(
+results = plot(
     alphas=alphas,
     n_traders_list=n_traders_list,
     total_steps=total_steps,
@@ -167,13 +168,14 @@ results = study_alpha_traders(
     fit_start_lag=50,
     save_path="images\\lmf_study.png",
 )
+"""
 
 alphas        = [1.5]
 n_traders_list = [1, 5, 50]
-total_steps   = 100_000_000
+total_steps   = 10_000_000
 max_lag       = 1000
 
-results = study_alpha_traders(
+results = plot(
     alphas=alphas,
     n_traders_list=n_traders_list,
     total_steps=total_steps,
