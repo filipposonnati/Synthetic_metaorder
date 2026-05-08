@@ -23,9 +23,8 @@ def constant(x, Y):
     return Y
 
 function = '20_power_2.0'
-#function = '1'
 
-model = 'ar_1000'
+model = 'var_1000'
 #model = ''
 
 print(function + ' ' + model)

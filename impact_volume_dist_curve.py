@@ -107,26 +107,26 @@ def plot_stratified_impact(df, image_name, n_bins=51):
 
     # --- Extended fitting: all NbChild values available in the data ---
     all_nb_values = sorted(df['NbChild'].unique())
-    print("=" * 55)
-    print(f"{'NbChild':>8}  {'Y':>12}  {'Y_err':>10}  {'delta':>8}  {'d_err':>8}  {'n':>7}")
-    print("-" * 55)
+    #print("=" * 55)
+    #print(f"{'NbChild':>8}  {'Y':>12}  {'Y_err':>10}  {'delta':>8}  {'d_err':>8}  {'n':>7}")
+    #print("-" * 55)
 
     all_results = {}
 
     for nb in all_nb_values:
         subset = df[df['NbChild'] == nb]
         if len(subset) < 10:
-            print(f"{nb:>8}  {'insufficient data':>42}")
+            #print(f"{nb:>8}  {'insufficient data':>42}")
             continue
         res = bin_data(subset, n_bins)
         if res is None:
-            print(f"{nb:>8}  {'binning failed':>42}")
+            #print(f"{nb:>8}  {'binning failed':>42}")
             continue
         grouped, _ = res
         fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
         if fit:
             Y, delta, Ye, de = fit
-            print(f"{nb:>8}  {Y:>12.4e}  {Ye:>10.4e}  {delta:>8.4f}  {de:>8.4f}  {len(subset):>7,}")
+            #print(f"{nb:>8}  {Y:>12.4e}  {Ye:>10.4e}  {delta:>8.4f}  {de:>8.4f}  {len(subset):>7,}")
 
             all_results[nb] = {
                 'Y': Y,
@@ -134,9 +134,9 @@ def plot_stratified_impact(df, image_name, n_bins=51):
                 'Ye': Ye,
                 'de': de
             }
-        else:
-            print(f"{nb:>8}  {'fit failed':>42}")
-    print("=" * 55)
+        #else:
+            #print(f"{nb:>8}  {'fit failed':>42}")
+    #print("=" * 55)
 
     # --- Plotting: restricted to plot_range {2, ..., 11} ---
     fig, axes = plt.subplots(5, 2, figsize=(14, 22))
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     nome_img_aggregato = f"{img_prefix}{function_clean}"
     
     # Nome per il plot stratificato: impact_volume_dist_curve_nbchild_20_power_2.0.png
-    nome_img_stratificato = f"{img_prefix}nbchild_{function_clean}"
+    nome_img_stratificato = f"{img_prefix}{function_clean}_nbchild"
 
     # Esecuzione
     try:
@@ -252,7 +252,7 @@ if __name__ == "__main__":
 
         # 3. Adjust layout and show
         plt.tight_layout()
-        plt.savefig(f"images/{img_prefix}nbchild_fit_{function_clean}.png")
+        plt.savefig(f"images/{img_prefix}{function_clean}_nbchild_fit.png")
         plt.close()
         
     except FileNotFoundError:
