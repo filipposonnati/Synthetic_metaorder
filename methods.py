@@ -219,7 +219,6 @@ def mapping_function(trades, nb_traders, kind, alpha = 0.0):
         samples = np.ones(int(nb_traders))
 
     probabilities = samples / samples.sum()
-    trader_names = [f"Trader {i+1}" for i in range(int(nb_traders))]
     
     # Usa gli indici per il campionamento per mantenere l'ordine nel plot
     trader_indices = np.arange(int(nb_traders))

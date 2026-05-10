@@ -87,7 +87,7 @@ def plot(
 
         for color, n_traders in zip(colors, n_traders_list):
             print(f"  Simulating alpha={alpha}, n_traders={n_traders} …")
-            flow = simulate_lillo_farmer_multi_trader(alpha, n_traders, total_steps)
+            flow = simulate_lmf(alpha, n_traders, total_steps)
             auto_corr = acf(flow, nlags=max_lag, fft=True)   # index 0 = lag-0
 
             # Power-law fit on lags >= fit_start_lag
@@ -152,34 +152,34 @@ def plot(
     plt.show()
     return results
 
+if __name__ == '__main__':
+    # --- Study parameters ---
+    """
+    alphas        = [1.2, 1.5, 1.8]
+    n_traders_list = [10, 20, 40]
+    total_steps   = 10_000_000
+    max_lag       = 1000
 
-# --- Study parameters ---
-"""
-alphas        = [1.2, 1.5, 1.8]
-n_traders_list = [10, 20, 40]
-total_steps   = 10_000_000
-max_lag       = 1000
+    results = plot(
+        alphas=alphas,
+        n_traders_list=n_traders_list,
+        total_steps=total_steps,
+        max_lag=max_lag,
+        fit_start_lag=50,
+        save_path="images\\lmf_study.png",
+    )
+    """
 
-results = plot(
-    alphas=alphas,
-    n_traders_list=n_traders_list,
-    total_steps=total_steps,
-    max_lag=max_lag,
-    fit_start_lag=50,
-    save_path="images\\lmf_study.png",
-)
-"""
+    alphas        = [1.5]
+    n_traders_list = [1, 5, 50]
+    total_steps   = 100_000_000
+    max_lag       = 1000
 
-alphas        = [1.5]
-n_traders_list = [1, 5, 50]
-total_steps   = 10_000_000
-max_lag       = 1000
-
-results = plot(
-    alphas=alphas,
-    n_traders_list=n_traders_list,
-    total_steps=total_steps,
-    max_lag=max_lag,
-    fit_start_lag=50,
-    save_path="images\\lmf_study_1.png",
-)
+    results = plot(
+        alphas=alphas,
+        n_traders_list=n_traders_list,
+        total_steps=total_steps,
+        max_lag=max_lag,
+        fit_start_lag=50,
+        save_path="images\\lmf_study_test.png",
+    )

@@ -211,197 +211,168 @@ def surrogate_test(all_signs, n_surrogates=200, seed=0):
 
 
 
-def generate_and_save_synthetic_signs(data_dir, output_dir, acf_gauss_target, p_plus, seed=42):
+def generate_gaussian_signs(length, acf_path = 'database/acf.npy', p_plus = 0.5, seed=42):
     """
     Legge i file originali, genera segni sintetici con la stessa lunghezza e 
     struttura temporale, e li salva in una nuova cartella.
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    acf = np.load(acf_path)
     
-    paths = listdir(data_dir)
-    rng = np.random.default_rng(seed)
+    # 2. Generazione segnale Gaussiano con la memoria target (Wiener-Khinchin)
+    # Usiamo reconstruct_gaussian definita precedentemente
+    # Nota: N_recon deve essere almeno lungo quanto il segnale originale
+    gauss_sig, _ = reconstruct_gaussian(acf, N=length, n_realizations=1, seed=seed)
+    gauss_sig = gauss_sig[0] # Estraiamo la singola realizzazione
     
-    print(f"Inizio generazione segni sintetici in: {output_dir}")
+    # 3. Binarizzazione (Soglia Van Vleck)
+    synth_signs = binarize(gauss_sig, p_plus=p_plus)
     
+    return synth_signs
+
+
+if __name__ == '__main__':
+    # ══════════════════════════════════════════════════════════════════════════════
+    # DATA LOADING
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    data_dir = 'database\\data'
+    paths    = listdir(data_dir)
+    max_lag  = 1_000
+    all_signs       = []
+    all_daily_corrs = []
+
     for path in paths:
-        # 1. Caricamento dati originali
-        file_path = os.path.join(data_dir, path)
-        df_orig = pd.read_csv(file_path, header=None)
-        N = len(df_orig)
-        
-        # 2. Generazione segnale Gaussiano con la memoria target (Wiener-Khinchin)
-        # Usiamo reconstruct_gaussian definita precedentemente
-        # Nota: N_recon deve essere almeno lungo quanto il segnale originale
-        gauss_sig, _ = reconstruct_gaussian(acf_gauss_target, N=N, n_realizations=1, seed=seed)
-        gauss_sig = gauss_sig[0] # Estraiamo la singola realizzazione
-        
-        # 3. Binarizzazione (Soglia Van Vleck)
-        synth_signs = binarize(gauss_sig, p_plus=p_plus)
-        
-        # 4. Creazione del nuovo DataFrame
-        # Manteniamo Tempo (col 0), Prezzo (col 1), Volume (col 2) originali
-        # Sostituiamo il Segno (col 3) con quello sintetico
-        df_synth = df_orig.copy()
-        df_synth[3] = synth_signs
-        
-        # 5. Salvataggio
-        output_path = os.path.join(output_dir, path)
-        df_synth.to_csv(output_path, header=None, index=False)
-        print(f"File salvato: {path} (N={N})")
+        trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
+        signs  = trades[3].values.astype(float)
+        all_signs.append(signs)
+        all_daily_corrs.append(acf(signs, nlags=max_lag, fft=True))
 
+    # ══════════════════════════════════════════════════════════════════════════════
+    # POOLED ACF + ERROR BARS
+    # ══════════════════════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DATA LOADING
-# ══════════════════════════════════════════════════════════════════════════════
+    pooled      = pooled_acf(all_signs, nlags=max_lag)   # one-sided R[0..max_lag]
+    data_matrix = np.array(all_daily_corrs)
+    std_err     = sem(data_matrix, axis=0)
 
-data_dir = 'database\\data'
-paths    = listdir(data_dir)
-max_lag  = 1_000
-all_signs       = []
-all_daily_corrs = []
+    lags        = np.arange(1, max_lag + 1)
+    pooled_vals = pooled[1:]
+    err_vals    = std_err[1:]
 
-for path in paths:
-    trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
-    signs  = trades[3].values.astype(float)
-    all_signs.append(signs)
-    all_daily_corrs.append(acf(signs, nlags=max_lag, fft=True))
+    np.save('database/acf.npy', pooled)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# POOLED ACF + ERROR BARS
-# ══════════════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════════
+    # POWER-LAW FITS
+    # ══════════════════════════════════════════════════════════════════════════════
 
-pooled      = pooled_acf(all_signs, nlags=max_lag)   # one-sided R[0..max_lag]
-data_matrix = np.array(all_daily_corrs)
-std_err     = sem(data_matrix, axis=0)
+    fit_range_early = np.arange(1, 21)
+    popt_early, pcov_early = curve_fit(power_law, fit_range_early, pooled[1:21])
+    perr_early = np.sqrt(np.diag(pcov_early))
+    print(f"Fit lag  1-20:")
+    print(f"  A     = {popt_early[0]:.6f} ± {perr_early[0]:.6f}")
+    print(f"  delta = {popt_early[1]:.6f} ± {perr_early[1]:.6f}")
 
-lags        = np.arange(1, max_lag + 1)
-pooled_vals = pooled[1:]
-err_vals    = std_err[1:]
+    fit_range_late = np.arange(21, max_lag + 1)
+    popt_late, pcov_late = curve_fit(power_law, fit_range_late, pooled[21:])
+    perr_late = np.sqrt(np.diag(pcov_late))
+    print(f"Fit lag 21-{max_lag}:")
+    print(f"  A     = {popt_late[0]:.6f} ± {perr_late[0]:.6f}")
+    print(f"  delta = {popt_late[1]:.6f} ± {perr_late[1]:.6f}")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# POWER-LAW FITS
-# ══════════════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════════
+    # RECONSTRUCTION: van Vleck → Gaussian → binary
+    # ══════════════════════════════════════════════════════════════════════════════
 
-fit_range_early = np.arange(1, 21)
-popt_early, pcov_early = curve_fit(power_law, fit_range_early, pooled[1:21])
-perr_early = np.sqrt(np.diag(pcov_early))
-print(f"Fit lag  1-20:")
-print(f"  A     = {popt_early[0]:.6f} ± {perr_early[0]:.6f}")
-print(f"  delta = {popt_early[1]:.6f} ± {perr_early[1]:.6f}")
+    all_signs_concat = np.concatenate(all_signs)
+    p_plus = float(np.mean(all_signs_concat > 0))
+    print(f"\nEmpirical p(+1) = {p_plus:.4f}")
 
-fit_range_late = np.arange(21, max_lag + 1)
-popt_late, pcov_late = curve_fit(power_law, fit_range_late, pooled[21:])
-perr_late = np.sqrt(np.diag(pcov_late))
-print(f"Fit lag 21-{max_lag}:")
-print(f"  A     = {popt_late[0]:.6f} ± {perr_late[0]:.6f}")
-print(f"  delta = {popt_late[1]:.6f} ± {perr_late[1]:.6f}")
+    # Step 1 — invert van Vleck: binary ACF → Gaussian ACF
+    print("Inverting van Vleck relation")
+    acf_gauss_target = van_vleck_invert(pooled, p_plus=p_plus)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# RECONSTRUCTION: van Vleck → Gaussian → binary
-# ══════════════════════════════════════════════════════════════════════════════
+    # Step 2 — reconstruct Gaussian signal
+    N_REAL  = 250
+    N_recon = max(int(np.median([len(s) for s in all_signs])), 1000 * max_lag)
+    print(f"Reconstructing {N_REAL} Gaussian realizations (N={N_recon} each)")
+    gauss_signals, psd_used = reconstruct_gaussian(
+        acf_gauss_target, N=N_recon, n_realizations=N_REAL, seed=42
+    )
 
-all_signs_concat = np.concatenate(all_signs)
-p_plus = float(np.mean(all_signs_concat > 0))
-print(f"\nEmpirical p(+1) = {p_plus:.4f}")
+    # Step 3 — threshold → binary ±1
+    binary_signals = np.array([binarize(g, p_plus=p_plus) for g in gauss_signals])
 
-# Step 1 — invert van Vleck: binary ACF → Gaussian ACF
-print("Inverting van Vleck relation")
-acf_gauss_target = van_vleck_invert(pooled, p_plus=p_plus)
+    # Average ACF over all realizations to suppress estimator noise
+    acf_recon_gauss  = np.mean([acf(g, nlags=max_lag, fft=True) for g in gauss_signals],  axis=0)
+    acf_recon_binary = np.mean([acf(b, nlags=max_lag, fft=True) for b in binary_signals], axis=0)
 
-# Step 2 — reconstruct Gaussian signal
-N_REAL  = 250
-N_recon = max(int(np.median([len(s) for s in all_signs])), 1000 * max_lag)
-print(f"Reconstructing {N_REAL} Gaussian realizations (N={N_recon} each)")
-gauss_signals, psd_used = reconstruct_gaussian(
-    acf_gauss_target, N=N_recon, n_realizations=N_REAL, seed=42
-)
+    print(f"Reconstructed p(+1) = {np.mean([np.mean(b > 0) for b in binary_signals]):.4f}  "
+        f"(target {p_plus:.4f})")
+    print(f"\nRound-trip check (lags 1-5):")
+    print(f"  {'lag':>4}  {'R_bin_orig':>12}  {'R_gauss_target':>15}  {'R_bin_recon':>12}")
+    for k in range(1, 6):
+        print(f"  {k:>4}  {pooled[k]:>12.5f}  {acf_gauss_target[k]:>15.5f}  "
+            f"{acf_recon_binary[k]:>12.5f}")
 
-# Step 3 — threshold → binary ±1
-binary_signals = np.array([binarize(g, p_plus=p_plus) for g in gauss_signals])
+    # ══════════════════════════════════════════════════════════════════════════════
+    # FIGURE 1 — Daily ACF  +  Pooled ACF with fits
+    # ══════════════════════════════════════════════════════════════════════════════
 
-# Average ACF over all realizations to suppress estimator noise
-acf_recon_gauss  = np.mean([acf(g, nlags=max_lag, fft=True) for g in gauss_signals],  axis=0)
-acf_recon_binary = np.mean([acf(b, nlags=max_lag, fft=True) for b in binary_signals], axis=0)
+    fig1, axes1 = plt.subplots(1, 2, figsize=(18, 6))
 
-print(f"Reconstructed p(+1) = {np.mean([np.mean(b > 0) for b in binary_signals]):.4f}  "
-      f"(target {p_plus:.4f})")
-print(f"\nRound-trip check (lags 1-5):")
-print(f"  {'lag':>4}  {'R_bin_orig':>12}  {'R_gauss_target':>15}  {'R_bin_recon':>12}")
-for k in range(1, 6):
-    print(f"  {k:>4}  {pooled[k]:>12.5f}  {acf_gauss_target[k]:>15.5f}  "
-          f"{acf_recon_binary[k]:>12.5f}")
+    # ── (0) Daily ACF ─────────────────────────────────────────────────────────────
+    ax = axes1[0]
+    for i, dc in enumerate(all_daily_corrs[:5]):
+        ax.plot(lags, dc[1:], lw=1.0, label=f'Day {i+1}')
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
+    ax.set_title('Daily ACF'); ax.set_xlim([1, 50]); ax.legend(fontsize=9)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 1 — Daily ACF  +  Pooled ACF with fits
-# ══════════════════════════════════════════════════════════════════════════════
+    # ── (1) Pooled ACF + fits ─────────────────────────────────────────────────────
+    ax = axes1[1]
+    ax.fill_between(lags, pooled_vals - err_vals, pooled_vals + err_vals,
+                    color='steelblue', alpha=0.30, label='SEM')
+    ax.plot(lags, pooled_vals, color='steelblue', lw=1.0, label='Pooled ACF')
+    ax.plot(fit_range_early, power_law(fit_range_early, *popt_early),
+            color='tomato', lw=2, linestyle='--',
+            label=f'Fit lag 1-20  (δ={popt_early[1]:.3f})')
+    ax.plot(fit_range_late, power_law(fit_range_late, *popt_late),
+            color='darkorange', lw=2, linestyle='--',
+            label=f'Fit lag 21-{max_lag}  (δ={popt_late[1]:.3f})')
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
+    ax.set_title('Pooled ACF'); ax.legend(fontsize=9)
 
-fig1, axes1 = plt.subplots(1, 2, figsize=(18, 6))
+    fig1.tight_layout()
+    fig1.savefig('images\\acf_original.png', dpi=300, bbox_inches='tight')
+    plt.close()
 
-# ── (0) Daily ACF ─────────────────────────────────────────────────────────────
-ax = axes1[0]
-for i, dc in enumerate(all_daily_corrs[:5]):
-    ax.plot(lags, dc[1:], lw=1.0, label=f'Day {i+1}')
-ax.set_xscale('log'); ax.set_yscale('log')
-ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
-ax.set_title('Daily ACF'); ax.set_xlim([1, 50]); ax.legend(fontsize=9)
+    # ══════════════════════════════════════════════════════════════════════════════
+    # FIGURE 2 — ACF round-trip verification
+    # ══════════════════════════════════════════════════════════════════════════════
 
-# ── (1) Pooled ACF + fits ─────────────────────────────────────────────────────
-ax = axes1[1]
-ax.fill_between(lags, pooled_vals - err_vals, pooled_vals + err_vals,
-                color='steelblue', alpha=0.30, label='SEM')
-ax.plot(lags, pooled_vals, color='steelblue', lw=1.0, label='Pooled ACF')
-ax.plot(fit_range_early, power_law(fit_range_early, *popt_early),
-        color='tomato', lw=2, linestyle='--',
-        label=f'Fit lag 1-20  (δ={popt_early[1]:.3f})')
-ax.plot(fit_range_late, power_law(fit_range_late, *popt_late),
-        color='darkorange', lw=2, linestyle='--',
-        label=f'Fit lag 21-{max_lag}  (δ={popt_late[1]:.3f})')
-ax.set_xscale('log'); ax.set_yscale('log')
-ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
-ax.set_title('Pooled ACF'); ax.legend(fontsize=9)
+    fig2, ax = plt.subplots(1, 2, figsize=(18, 6))
 
-fig1.tight_layout()
-fig1.savefig('images\\acf_original.png', dpi=300, bbox_inches='tight')
-plt.close()
+    ax[0].plot(lags, pooled_vals, color='steelblue',  lw=1.0, label='Pooled ACF (original)')
+    ax[0].plot(lags, acf_recon_binary[1:], color='red', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
 
-# ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 2 — ACF round-trip verification
-# ══════════════════════════════════════════════════════════════════════════════
+    ax[0].set_title('Binary')
+    ax[0].set_xscale('log')
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel('Lag')
+    ax[0].set_ylabel('ACF')
+    ax[0].legend()
 
-fig2, ax = plt.subplots(1, 2, figsize=(18, 6))
+    ax[1].plot(lags, acf_gauss_target[1:], color='blue', lw=1.0, linestyle='-.', label='Van Vleck target')
+    ax[1].plot(lags, acf_recon_gauss[1:], color='darkorange', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
 
-ax[0].plot(lags, pooled_vals, color='steelblue',  lw=1.0, label='Pooled ACF (original)')
-ax[0].plot(lags, acf_recon_binary[1:], color='red', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
+    ax[1].set_title('Gaussian')
+    ax[1].set_xscale('log')
+    ax[1].set_yscale('log')
+    ax[1].set_xlabel('Lag')
+    ax[1].set_ylabel('ACF')
+    ax[1].legend()
 
-ax[0].set_title('Binary')
-ax[0].set_xscale('log')
-ax[0].set_yscale('log')
-ax[0].set_xlabel('Lag')
-ax[0].set_ylabel('ACF')
-ax[0].legend()
-
-ax[1].plot(lags, acf_gauss_target[1:], color='blue', lw=1.0, linestyle='-.', label='Van Vleck target')
-ax[1].plot(lags, acf_recon_gauss[1:], color='darkorange', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
-
-ax[1].set_title('Gaussian')
-ax[1].set_xscale('log')
-ax[1].set_yscale('log')
-ax[1].set_xlabel('Lag')
-ax[1].set_ylabel('ACF')
-ax[1].legend()
-
-fig2.tight_layout()
-fig2.savefig('images\\acf_roundtrip.png', dpi=300, bbox_inches='tight')
-plt.close()
-
-# Definiamo le cartelle
-output_folder = 'database\\data_signs'
-
-# Chiamata alla funzione
-generate_and_save_synthetic_signs(
-    data_dir=data_dir, 
-    output_dir=output_folder, 
-    acf_gauss_target=acf_gauss_target, 
-    p_plus=p_plus
-)
+    fig2.tight_layout()
+    fig2.savefig('images\\acf_roundtrip.png', dpi=300, bbox_inches='tight')
+    plt.close()
