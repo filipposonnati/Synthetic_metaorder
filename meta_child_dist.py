@@ -265,7 +265,7 @@ def plot_all(results_dir: str) -> None:
     ax_ccdf.legend(framealpha=0.4)
     plt.tight_layout()
     os.makedirs('images', exist_ok=True)
-    fig.savefig('images\\dist_meta_child_all.png', dpi=300)
+    fig.savefig('images\\meta_child_dist\\dist_meta_child_all.png', dpi=300)
     plt.close()
 
 
@@ -273,7 +273,9 @@ def plot_all(results_dir: str) -> None:
 # Compare real signs vs all simulated variants  (with KS test)
 # ---------------------------------------------------------------------------
 
-def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
+def compare_all_distributions(base_dir: Path, real_subdir: str,
+                              nb_traders: int = None, kind: str = None,
+                              exponent: float = None) -> None:
     """
     Scan base_dir for every subdirectory whose name starts with
     'meta_child_dist'.  The one named exactly real_subdir is treated as the
@@ -293,7 +295,13 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
     ----------
     base_dir    : Path to the folder that contains all meta_child_dist* subdirs
     real_subdir : name of the subdirectory holding real-sign results
+    nb_traders  : if given, restrict the comparison to this single configuration
+    kind        : required when nb_traders is given ('power' or 'uniform')
+    exponent    : required when nb_traders is given (ignored for 'uniform')
     """
+    # ── Resolve target stem when a specific configuration is requested ────────
+    target_stem = build_filename(nb_traders, kind, exponent) if nb_traders is not None else None
+
     # ── Discover directories ─────────────────────────────────────────────────
     all_dirs = sorted(
         d for d in base_dir.iterdir()
@@ -316,22 +324,37 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
     print(f"[compare] Variants  : {[d.name for d in sim_dirs]}\n")
 
     # ── Load data ────────────────────────────────────────────────────────────
-    real_data: dict[str, np.ndarray] = {
-        stem: data for stem, (_, data) in load_all(str(real_dir)).items()
-    }
+    def _load_stem(directory: str) -> dict[str, np.ndarray]:
+        """Load only target_stem if specified, otherwise every stem."""
+        if target_stem is not None:
+            filepath = results_path(directory, target_stem)
+            if not os.path.exists(filepath):
+                return {}
+            archive = np.load(filepath)
+            print(f"[load]  {filepath}  |  "
+                  f"iter={int(archive['iterations'])}  |  n={len(archive['data']):,}")
+            return {target_stem: archive['data']}
+        return {stem: data for stem, (_, data) in load_all(directory).items()}
+
+    real_data: dict[str, np.ndarray] = _load_stem(str(real_dir))
 
     # sim_datasets[variant_name][stem] = data
     sim_datasets: dict[str, dict[str, np.ndarray]] = {}
     for sim_dir in sim_dirs:
         try:
-            sim_datasets[sim_dir.name] = {
-                stem: data for stem, (_, data) in load_all(str(sim_dir)).items()
-            }
-        except FileNotFoundError as e:
+            sim_datasets[sim_dir.name] = _load_stem(str(sim_dir))
+        except Exception as e:
             print(f"[warn] {e}")
 
     # ── Union of stems present in the real data ───────────────────────────────
     stems = sorted(real_data.keys())
+    if target_stem is not None:
+        if target_stem not in stems:
+            raise ValueError(
+                f"Stem '{target_stem}' not found in real-signs directory. "
+                f"Available stems: {stems}"
+            )
+        stems = [target_stem]
     if not stems:
         print("[compare] No stems found in real-signs directory.")
         return
@@ -397,7 +420,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
         ax_ccdf.plot(x_ccdf_r, ccdf_r, **real_style)
 
         # ── KS annotation vertical offset (one text box per variant) ─────
-        #text_y = 0.97
+        text_y = 0.97
 
         # ── Plot each simulated variant & run KS test ─────────────────────
         for variant_name, sim_data_dict in sim_datasets.items():
@@ -420,7 +443,6 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
             print(f"  {stem:20s}  vs  {variant_name:35s}"
                   f"  D = {ks['stat']:.5f}   p = {ks['p']:.2e}  {sig}")
 
-            """
             # Mark max-separation point on CCDF
             ax_ccdf.vlines(
                 ks['x_D'],
@@ -442,8 +464,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
                 bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
                           edgecolor=style['color'], alpha=0.75),
             )
-            """
-            #text_y -= 0.18   # shift down for the next variant's box
+            text_y -= 0.18   # shift down for the next variant's box
 
         if row == 0:
             ax_pdf.legend(fontsize=7.5, framealpha=0.4)
@@ -452,7 +473,8 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
     print("=" * 65 + "\n")
 
     os.makedirs('images', exist_ok=True)
-    out_path = os.path.join('images', 'compare_real_vs_simulated.png')
+    out_fname = f'meta_child_dist/compare_real_vs_simulated_{target_stem}.png' if target_stem else 'compare_real_vs_simulated.png'
+    out_path = os.path.join('images', out_fname)
     fig.savefig(out_path, dpi=300)
     print(f"[save]  {out_path}")
     plt.show()
@@ -462,4 +484,8 @@ def compare_all_distributions(base_dir: Path, real_subdir: str) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 plot_all(results_dir)
-compare_all_distributions(BASE_DIR, REAL_SUBDIR)
+# To compare all configurations:
+# compare_all_distributions(BASE_DIR, REAL_SUBDIR)
+
+# To compare a single configuration:
+compare_all_distributions(BASE_DIR, REAL_SUBDIR, nb_traders=20, kind='power', exponent=2.0)
