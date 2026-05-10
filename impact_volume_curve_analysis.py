@@ -194,7 +194,7 @@ def plot_stratified_impact(df, image_name, n_bins=51):
 
 if __name__ == "__main__":
     # 1. Configurazione nomi
-    model = '' 
+    model = 'noise' 
     file_name_con_estensione = '20_power_2.0.csv'
     # Rimuoviamo .csv per i titoli dei grafici e i nomi dei file immagine
     function_clean = file_name_con_estensione.replace('.csv', '')

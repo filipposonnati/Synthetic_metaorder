@@ -14,7 +14,11 @@ nb_traders = 20
 kind = 'power'
 exponent = 2.0
 
-paths = np.array(listdir(f'database\\{f"data_{model}" if model else "data"}'))
+dir = f'database\\{f"data_{model}" if model else "data"}'
+
+print(dir)
+
+paths = np.array(listdir(dir))
 
 print(nb_traders, kind, exponent)
 
@@ -55,7 +59,7 @@ for path in paths:
 
     print(date_string)
 
-    meta, trades = methods.generate(path, nb_traders, kind, exponent, l)
+    meta, trades = methods.generate(path, nb_traders, kind, exponent, l, dir)
 
     l += len(meta)
 

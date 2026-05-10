@@ -235,7 +235,7 @@ def plot_all(results_dir: str) -> None:
     colors   = plt.cm.tab10.colors
     markers  = ['o', 's', '^', 'D', 'v', 'P', 'X', '*']
 
-    fig, (ax_pdf, ax_ccdf) = plt.subplots(1, 2, figsize=(13, 5.5))
+    fig, (ax_pdf, ax_ccdf) = plt.subplots(1, 2, figsize=(12, 6))
 
     for ax, title in [(ax_pdf, 'PDF'),
                       (ax_ccdf, 'CCDF')]:
@@ -373,7 +373,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 
     # ── Build figure ─────────────────────────────────────────────────────────
     n     = len(stems)
-    fig   = plt.figure()
+    fig   = plt.figure(figsize=(13, 6))
     gs    = gridspec.GridSpec(
         n, 2,
         figure=fig
@@ -461,9 +461,8 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-#plot_all(results_dir)
-# To compare all configurations:
-# compare_all_distributions(BASE_DIR, REAL_SUBDIR)
+if __name__ == '__main__':
+    #plot_all(results_dir)
 
-# To compare a single configuration:
-compare_all_distributions(BASE_DIR, REAL_SUBDIR, nb_traders=20, kind='power', exponent=2.0)
+    # To compare a single configuration:
+    compare_all_distributions(BASE_DIR, REAL_SUBDIR, nb_traders=20, kind='power', exponent=2.0)
