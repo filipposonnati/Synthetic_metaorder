@@ -372,16 +372,11 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
                       color='black', alpha=0.9, label=real_subdir)
 
     # ── Build figure ─────────────────────────────────────────────────────────
-    row_h = 3.8
     n     = len(stems)
-    fig   = plt.figure(figsize=(13, row_h * n))
+    fig   = plt.figure()
     gs    = gridspec.GridSpec(
         n, 2,
-        figure=fig,
-        hspace=0.35,
-        wspace=0.25,
-        left=0.10, right=0.98,
-        top=0.97,  bottom=0.03,
+        figure=fig
     )
 
     def _pdf_ccdf(data: np.ndarray):
@@ -411,16 +406,13 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
             if row == 0:
                 ax.set_title(col_title)
 
-        ax_pdf.set_ylabel(f'{stem.replace("_", " ")}\nP(x)')
+        ax_pdf.set_ylabel('P(x)')
 
         # ── Plot real distribution ────────────────────────────────────────
         data_real = real_data[stem]
         x_pdf_r, cnt_r, x_ccdf_r, ccdf_r = _pdf_ccdf(data_real)
         ax_pdf.plot(x_pdf_r,   cnt_r,  **real_style)
         ax_ccdf.plot(x_ccdf_r, ccdf_r, **real_style)
-
-        # ── KS annotation vertical offset (one text box per variant) ─────
-        text_y = 0.97
 
         # ── Plot each simulated variant & run KS test ─────────────────────
         for variant_name, sim_data_dict in sim_datasets.items():
@@ -452,20 +444,6 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
                 alpha=0.8, zorder=5,
             )
 
-            # Annotate D and p-value (stacked boxes, one per variant)
-            ax_ccdf.text(
-                0.97, text_y,
-                f"{variant_name}\nD={ks['stat']:.4f}  p={ks['p']:.2e}  {sig}",
-                transform=ax_ccdf.transAxes,
-                fontsize=7,
-                verticalalignment='top',
-                horizontalalignment='right',
-                color=style['color'],
-                bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
-                          edgecolor=style['color'], alpha=0.75),
-            )
-            text_y -= 0.18   # shift down for the next variant's box
-
         if row == 0:
             ax_pdf.legend(fontsize=7.5, framealpha=0.4)
             ax_ccdf.legend(fontsize=7.5, framealpha=0.4)
@@ -483,7 +461,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-plot_all(results_dir)
+#plot_all(results_dir)
 # To compare all configurations:
 # compare_all_distributions(BASE_DIR, REAL_SUBDIR)
 
