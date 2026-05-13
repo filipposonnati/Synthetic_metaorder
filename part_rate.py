@@ -358,7 +358,12 @@ def plot_bucci(model = ''):
         # 3. Histogram on the bottom subplot
         hist_bins = np.logspace(np.log10(pr.min()), np.log10(pr.max()), 51)
         counts, edges = np.histogram(pr, bins=hist_bins, density=False)
-        ax_hist.step(edges[:-1], counts, where='post', color=color, alpha=1.0, linewidth=1.5, label=label)
+
+        ax_hist.step(
+            np.append(edges[:-1], edges[-1]),
+            np.append(counts, 0),
+            where='post', color=color, alpha=1.0, linewidth=1.5, label=label
+        )
 
         # 4. Creazione dei Bin Logaritmici sull'asse X (participation rate)
         bins = np.logspace(np.log10(pr.min()), np.log10(pr.max()), 101)

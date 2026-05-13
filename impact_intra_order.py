@@ -24,7 +24,7 @@ def constant(x, Y):
 
 function = '20_power_2.0'
 
-model = 'ar_1000'
+model = 'synthetic'
 #model = ''
 
 print(function + ' ' + model)

@@ -17,7 +17,7 @@ plt.rcParams.update({
     'legend.fontsize': 14     # Legenda
 })
 
-model = "noise"
+model = "synthetic"
 
 dir = 'database\\meta'
 if model != "":

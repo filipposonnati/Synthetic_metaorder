@@ -315,7 +315,7 @@ def plot_ratio_by_nb_child(trades: pd.DataFrame, function: str, model: str,
 
 if __name__ == '__main__':
     function = '20_power_2.0'
-    model    = ''
+    model    = 'var_1000'
 
     print(f"{function} {model}")
 

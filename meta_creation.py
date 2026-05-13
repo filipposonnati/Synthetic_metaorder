@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = "noise"
+model = "synthetic"
 
 data_dir = 'database\\data'
 

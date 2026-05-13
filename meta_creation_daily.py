@@ -9,7 +9,7 @@ from os import listdir
 import methods
 from pathlib import Path
 
-model = ''
+model = 'synthetic'
 nb_traders = 20
 kind = 'power'
 exponent = 2.0
