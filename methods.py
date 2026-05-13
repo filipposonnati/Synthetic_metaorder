@@ -80,6 +80,8 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
     # Volume traded by everyone until a certain point
     sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] - start_cum_volume + start_volume
 
+    sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] / sorted_trades.groupby('metaid')['TradedVolume'].transform('last')
+
     # Identifica il prezzo iniziale (BeginMid) del PRIMO trade per ogni metaordine
     start_prices = sorted_trades.groupby('metaid')['BeginMid'].transform('first')
     
