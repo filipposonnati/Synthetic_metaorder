@@ -21,7 +21,6 @@ def robust_power_law_fit(x, y, x_err, y_err, sample_count):
     """
     Performs an iterative power-law fit on the 'core' high-density data.
     """
-    # 1. Identify high-density core
     core_mask = sample_count > (0.5 * sample_count.max())
     xc, yc = x[core_mask], y[core_mask]
     xerr_c, yerr_c = x_err[core_mask], y_err[core_mask]
@@ -30,16 +29,14 @@ def robust_power_law_fit(x, y, x_err, y_err, sample_count):
         return None
 
     try:
-        # Initial fit ignoring errors
         popt, _ = curve_fit(power_law, xc, yc, maxfev=5000)
         Y, delta = popt
 
-        # Iterative fit propagating X and Y errors into effective sigma
         for _ in range(10):
             eff_err = np.sqrt(yerr_c**2 + (Y * delta * xc**(delta - 1) * xerr_c)**2)
             popt, pcov = curve_fit(power_law, xc, yc, sigma=eff_err, absolute_sigma=True, maxfev=5000)
             Y, delta = popt
-        
+
         return Y, delta, np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1])
     except:
         return None
@@ -49,213 +46,229 @@ def bin_data(df, n_bins=51):
     v_min, v_max = df['MetaVolume'].min(), df['MetaVolume'].max()
     if v_min <= 0 or v_max <= 0 or v_min == v_max:
         return None
-    
+
     bins = np.logspace(np.log10(v_min), np.log10(v_max), n_bins)
     df = df.copy()
     df['bin'] = pd.cut(df['MetaVolume'], bins=bins, include_lowest=True)
-    
+
     grouped = df.groupby('bin', observed=True).agg({
         'MetaVolume': ['mean', 'std'],
         'MetaImpact': ['mean', 'std', 'count']
     }).dropna()
-    
+
     grouped.columns = ['x', 'x_std', 'y', 'y_std', 'count']
-    # Calculate Standard Error of the Mean
     grouped['x_err'] = grouped['x_std'] / np.sqrt(grouped['count'])
     grouped['y_err'] = grouped['y_std'] / np.sqrt(grouped['count'])
-    
+
     return grouped, bins
 
+def load_model_data(model, file_name_con_estensione):
+    """Load and clean data for a given model ('' means real data)."""
+    folder_prefix = f"meta_{model}" if model else "meta"
+    path = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
+    data = pd.read_csv(path)
+    return data[data['NbChild'] > 1].copy()
+
+def model_display_name(model):
+    """Human-readable label for a model string."""
+    return "Real data" if model == '' else model
+
+
 def plot_aggregate_impact(df, image_name, n_bins=51):
-    """Part 1: Single aggregate plot."""
+    """Single aggregate plot with full fit params (Y and delta) in the legend."""
     res = bin_data(df, n_bins)
-    if res is None: return
+    if res is None:
+        return
     grouped, bins = res
-    
-    fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
-    
+
+    fit = robust_power_law_fit(
+        grouped['x'], grouped['y'],
+        grouped['x_err'], grouped['y_err'],
+        grouped['count']
+    )
+
     fig, ax1 = plt.subplots(figsize=(8, 6))
     ax2 = ax1.twinx()
-    ax1.set_xscale("log"); ax1.set_yscale("log")
-    ax1.set_xlabel(r'$Q$'); ax1.set_ylabel(r'$I(Q)$')
+    ax1.set_xscale("log")
+    ax1.set_yscale("log")
+    ax1.set_xlabel(r'$Q$')
+    ax1.set_ylabel(r'$I(Q)$')
     ax2.set_ylabel('Frequency')
-    
-    # Data and Hist
+
     ax2.hist(df['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
-    ax1.errorbar(grouped['x'], grouped['y'], xerr=grouped['x_err'], yerr=grouped['y_err'], 
-                 marker='o', linestyle="", color='C0', label="Binned data")
-    
+    ax1.errorbar(
+        grouped['x'], grouped['y'],
+        xerr=grouped['x_err'], yerr=grouped['y_err'],
+        marker='o', linestyle='', color='C0', label='Binned data'
+    )
+
     if fit:
         Y, delta, Y_err, delta_err = fit
-        x_line = np.logspace(np.log10(grouped['x'].min()), np.log10(grouped['x'].max()), 100)
-        ax1.plot(x_line, power_law(x_line, Y, delta), 'k--', label='Fitted curve')
-        print(f"Aggregate Fit: Y={Y:.4e}, delta={delta:.4f}")
+        x_line = np.logspace(
+            np.log10(grouped['x'].min()),
+            np.log10(grouped['x'].max()), 100
+        )
+        fit_label = rf'$Y={Y:.2e} \pm {Y_err:.2e},\ \delta={delta:.3f} \pm {delta_err:.3f}$'
+        ax1.plot(x_line, power_law(x_line, Y, delta), 'k--', label=fit_label)
+        print(f"Aggregate Fit: Y={Y:.4e} ± {Y_err:.4e}, delta={delta:.4f} ± {delta_err:.4f}")
 
-    ax1.legend()
-    plt.tight_layout()
-    plt.savefig(f'images\\{image_name}.png')
-    plt.close()
-
-def plot_stratified_impact(df, image_name, n_bins=51):
-    """Part 2: 10 subplots (2 columns x 5 rows) stratified by NbChild.
-
-    Plots are restricted to NbChild in {2, ..., 11}, but the power-law fit
-    is run for every NbChild value present in the data and printed to stdout.
-    """
-    plot_range = range(2, 12)
-    colors = dict(zip(plot_range, cm.tab10(np.linspace(0, 1, len(plot_range)))))
-
-    # --- Extended fitting: all NbChild values available in the data ---
-    all_nb_values = sorted(df['NbChild'].unique())
-    #print("=" * 55)
-    #print(f"{'NbChild':>8}  {'Y':>12}  {'Y_err':>10}  {'delta':>8}  {'d_err':>8}  {'n':>7}")
-    #print("-" * 55)
-
-    all_results = {}
-
-    for nb in all_nb_values:
-        subset = df[df['NbChild'] == nb]
-        if len(subset) < 10:
-            #print(f"{nb:>8}  {'insufficient data':>42}")
-            continue
-        res = bin_data(subset, n_bins)
-        if res is None:
-            #print(f"{nb:>8}  {'binning failed':>42}")
-            continue
-        grouped, _ = res
-        fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
-        if fit:
-            Y, delta, Ye, de = fit
-            #print(f"{nb:>8}  {Y:>12.4e}  {Ye:>10.4e}  {delta:>8.4f}  {de:>8.4f}  {len(subset):>7,}")
-
-            all_results[nb] = {
-                'Y': Y,
-                'delta': delta,
-                'Ye': Ye,
-                'de': de
-            }
-        #else:
-            #print(f"{nb:>8}  {'fit failed':>42}")
-    #print("=" * 55)
-
-    # --- Plotting: restricted to plot_range {2, ..., 11} ---
-    fig, axes = plt.subplots(5, 2, figsize=(14, 22))
-    axes_flat = axes.flatten()
-
-    for i, nb in enumerate(plot_range):
-        ax1 = axes_flat[i]
-        subset = df[df['NbChild'] == nb]
-
-        if subset.empty or len(subset) < 40:
-            ax1.text(0.5, 0.5, f"NbChild={nb}: Insufficient Data", ha='center')
-            continue
-
-        res = bin_data(subset, n_bins)
-        if res is None:
-            continue
-        grouped, bins = res
-
-        ax2 = ax1.twinx()
-        ax1.set_xscale('log'); ax1.set_yscale('log')
-        #ax1.set_title(rf'$N_c = {nb}$ ($n={len(subset):,}$, bins={len(grouped)})$', fontsize=13)
-
-        # Plotting
-        ax2.hist(subset['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
-        ax1.errorbar(grouped['x'], grouped['y'], xerr=grouped['x_err'], yerr=grouped['y_err'],
-                     marker='o', linestyle='', color=colors[nb], markersize=4, label='Binned data')
-
-        fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
-        if fit:
-            Y, delta, Ye, de = fit
-            xl = np.logspace(np.log10(grouped['x'].min()), np.log10(grouped['x'].max()), 100)
-            ax1.plot(xl, power_law(xl, Y, delta), 'k--', linewidth=1.5,
-                     label=rf'$Y={Y:.2e}, \delta={delta:.3f} \pm {de:.3f}$')
-
-        ax1.legend(loc='upper left', fontsize=9)
-
-        # Only show x-label on the bottom row (indices 8 and 9)
-        if i >= 8:
-            ax1.set_xlabel(r'$Q$')
-        else:
-            ax1.set_xlabel('')
-
-        # Hide y-labels on the right column for even more space
-        if i % 2 != 0:
-            ax1.set_ylabel('')
-        else:
-            ax1.set_ylabel(r'$I(Q)$')
-
-    #fig.suptitle('Market Impact vs. Volume — Stratified by $N_c$', fontsize=20, y=1.01)
+    ax1.legend(loc='upper left', fontsize=10)
+    ax1.grid(True, which='major', linewidth=1.0, alpha=0.7)
     plt.tight_layout()
     plt.savefig(f'images\\{image_name}.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    return all_results
+
+def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
+                              n_bins=51, vertical_shift=10.0):
+    """
+    Comparison plot: datasets sorted by fitted delta (ascending), then stacked
+    vertically with a multiplicative shift so slopes can be compared without
+    overlap. Top of the ladder = lowest delta, bottom = highest delta.
+
+    Parameters
+    ----------
+    file_name_con_estensione : str
+        CSV filename (e.g. '20_power_2.0.csv').
+    models : list[str]
+        Models to compare. Use '' for real data (no model prefix).
+    image_name : str
+        Output image path (without 'images\\' prefix or extension).
+    n_bins : int
+        Number of log-spaced bins.
+    vertical_shift : float
+        Multiplicative spacing between successive datasets in log space.
+        Each dataset i is multiplied by vertical_shift^(n-1-i) so that
+        rank 0 (lowest delta) sits highest on the plot.
+    """
+    # ── Pass 1: load, bin, fit every model ───────────────────────────────────
+    records = []
+
+    for model in models:
+        label_base = model_display_name(model)
+        try:
+            df = load_model_data(model, file_name_con_estensione)
+        except FileNotFoundError:
+            print(f"[WARNING] File not found for model='{model}', skipping.")
+            continue
+        except Exception as e:
+            print(f"[WARNING] Could not load model='{model}': {e}, skipping.")
+            continue
+
+        res = bin_data(df, n_bins)
+        if res is None:
+            print(f"[WARNING] Binning failed for model='{model}', skipping.")
+            continue
+        grouped, _ = res
+
+        fit = robust_power_law_fit(
+            grouped['x'], grouped['y'],
+            grouped['x_err'], grouped['y_err'],
+            grouped['count']
+        )
+        if fit is None:
+            print(f"[{label_base}] Fit failed, skipping.")
+            continue
+
+        records.append(dict(model=model, label=label_base, grouped=grouped, fit=fit))
+
+    if not records:
+        print("[ERROR] No models could be fitted; aborting comparison plot.")
+        return
+
+    # ── Sort ascending by delta ───────────────────────────────────────────────
+    records.sort(key=lambda r: r['fit'][1])  # fit[1] == delta
+    n = len(records)
+
+    # ── Assign colours in sorted order (tab10) ───────────────────────────────
+    palette = cm.tab10(np.linspace(0, 1, max(n, 1)))
+
+    # ── Pass 2: plot ─────────────────────────────────────────────────────────
+    fig, ax1 = plt.subplots(figsize=(10, 7))
+    ax1.set_xscale("log")
+    ax1.set_yscale("log")
+    ax1.set_xlabel(r'$Q$')
+    ax1.set_ylabel(r'$I(Q)$ (shifted)')
+    ax1.set_xlim([1e-6, 1e-2])
+
+    print(f"\n{'Rank':>5}  {'Model':<20}  {'delta':>7}  {'shift':>8}")
+    print("-" * 50)
+
+    for rank, (rec, color) in enumerate(zip(records, palette)):
+        # rank 0 (lowest delta) → top of plot → largest shift exponent
+        shift_exp = n - 1 - rank
+        shift = vertical_shift ** shift_exp
+        grouped = rec['grouped']
+        Y, delta, Y_err, delta_err = rec['fit']
+        label_base = rec['label']
+
+        print(f"{rank:>5}  {label_base:<20}  {delta:>7.3f}  ×{shift:>7.2f}")
+
+        # Shifted scatter
+        ax1.plot(
+            grouped['x'], grouped['y'] * shift,
+            marker='o', linestyle='', color=color, alpha=0.7, markersize=4
+        )
+
+        # Shifted fit line clipped to model's own x-range
+        x_line = np.logspace(
+            np.log10(grouped['x'].min()),
+            np.log10(grouped['x'].max()), 200
+        )
+        if shift_exp != 0:
+            shift_str = rf" ($\times {vertical_shift:.0f}^{{{shift_exp}}}$)"
+        else:
+            shift_str = ""
+        fit_label = rf"{label_base}: $\delta={delta:.3f} \pm {delta_err:.3f}$" + shift_str
+        ax1.plot(
+            x_line, power_law(x_line, Y * shift, delta),
+            linestyle='--', linewidth=1.8, color=color,
+            label=fit_label, solid_capstyle='butt'
+        )
+
+    print("-" * 50)
+
+    ax1.legend(loc='lower right', fontsize=10)
+    ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(f'images\\{image_name}.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Comparison plot saved: images\\{image_name}.png")
+
 
 if __name__ == "__main__":
-    # 1. Configurazione nomi
-    model = 'noise' 
+    # ── Configuration ────────────────────────────────────────────────────────
     file_name_con_estensione = '20_power_2.0.csv'
-    # Rimuoviamo .csv per i titoli dei grafici e i nomi dei file immagine
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    # 2. Path per il CARICAMENTO (deve avere il .csv)
-    folder_prefix = f"meta_slim_{model}" if model else "meta_slim"
-    path_caricamento = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
+    # '' = real data (no model prefix); add any synthetic model names here
+    models = ['', 'ar_1000', 'var_1000', 'delta_0.2_1000', 'delta_0.5_1000', 'delta_0.8_1000', 'lmf_tim_sqrt', 'lmf_tim_lin']
 
-    # 3. Path per il SALVATAGGIO (regola: prefisso_nbchild_nome)
-    img_prefix = f"impact_volume_dist_curve/{model + '_' if model else ''}"
-    
-    # Nome per il plot aggregato: impact_volume_dist_curve_20_power_2.0.png
-    nome_img_aggregato = f"{img_prefix}{function_clean}"
-    
-    # Nome per il plot stratificato: impact_volume_dist_curve_nbchild_20_power_2.0.png
-    nome_img_stratificato = f"{img_prefix}{function_clean}_nbchild"
+    # ── Comparison plot (all models overlaid) ────────────────────────────────
+    img_comparison = f"impact_volume_curve_analysis/{function_clean}_comparison"
+    print(f"\nGenerating comparison plot: {img_comparison}")
+    plot_aggregate_comparison(
+        file_name_con_estensione,
+        models=models,
+        image_name=img_comparison,
+        vertical_shift=10.0,   # tune this if datasets still overlap
+    )
 
-    # Esecuzione
-    try:
-        data = pd.read_csv(path_caricamento)
-        df_clean = data[data['NbChild'] > 1].copy()
+    # ── Per-model individual plots ────────────────────────────────────────────
+    for model in models:
+        label = model_display_name(model)
+        folder_prefix = f"meta_{model}" if model else "meta"
+        img_prefix = f"impact_volume_curve_analysis/{model + '_' if model else ''}"
+        nome_img_aggregato = f"{img_prefix}{function_clean}"
 
-        # Parte 1
-        print(f"Generazione grafico aggregato: {nome_img_aggregato}")
-        plot_aggregate_impact(df_clean, nome_img_aggregato)
+        try:
+            data = pd.read_csv(f"database\\{folder_prefix}\\meta_{file_name_con_estensione}")
+            df_clean = data[data['NbChild'] > 1].copy()
 
-        # Parte 2
-        print(f"Generazione grafico stratificato: {nome_img_stratificato}")
-        all_results = plot_stratified_impact(df_clean, nome_img_stratificato)
+            print(f"\n[{label}] Generating aggregate plot: {nome_img_aggregato}")
+            plot_aggregate_impact(df_clean, nome_img_aggregato)
 
-        # 1. Convert your dictionary to a DataFrame for easy plotting
-        # orient='index' makes 'nb' the index of the dataframe
-        res_df = pd.DataFrame.from_dict(all_results, orient='index').sort_index()
-
-        res_df = res_df[res_df.index <= 20]
-
-        # 2. Create the figure and two subplots (1 row, 2 columns)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-
-        # --- Graph 1: Y values with Error Bars ---
-        ax1.errorbar(res_df.index, res_df['Y'], yerr=res_df['Ye'], 
-                    fmt='.', color='blue', ecolor='lightblue', label='Y')
-        ax1.set_xlabel('Number of Children')
-        ax1.set_ylabel('Y')
-        ax1.grid(True, linestyle='--', alpha=0.7)
-        ax1.legend()
-
-        # --- Graph 2: Delta values with Error Bars ---
-        ax2.errorbar(res_df.index, res_df['delta'], yerr=res_df['de'], 
-                    fmt='.', color='red', ecolor='lightsalmon', label=r'$\delta$')
-        ax2.set_xlabel('Number of Children')
-        ax2.set_ylabel(r'$\delta$')
-        ax2.grid(True, linestyle='--', alpha=0.7)
-        ax2.legend()
-
-        # 3. Adjust layout and show
-        plt.tight_layout()
-        plt.savefig(f"images/{img_prefix}{function_clean}_nbchild_fit.png")
-        plt.close()
-        
-    except FileNotFoundError:
-        print(f"Errore: Non trovo il file CSV al percorso: {path_caricamento}")
-    except Exception as e:
-        print(f"Si è verificato un errore: {e}")
+        except FileNotFoundError:
+            print(f"[{label}] ERROR: file not found at database\\{folder_prefix}\\meta_{file_name_con_estensione}")
+        except Exception as e:
+            print(f"[{label}] ERROR: {e}")

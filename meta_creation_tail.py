@@ -5,7 +5,7 @@ from os import listdir
 import methods
 
 model = ""
-N_REALIZATIONS = 25
+N_REALIZATIONS = 5
 MIN_CHILD = 2
 MAX_PER_CHILD = 1_000_000  # cap per NbChild value; None = no cap
 

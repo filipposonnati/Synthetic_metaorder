@@ -235,22 +235,40 @@ def calibrate_tim(data_dir, beta, delta, kernel_L):
 def simulate_tim(signs, volumes, beta, delta, sigma_f, sigma_eta,
                  kernel_L, P0, rng):
     """
-    Genera i prezzi post-trade P_t tramite il Transient Impact Model.
+    Genera i prezzi PRE-TRADE P_t tramite il Transient Impact Model.
+    P_t e' il prezzo un momento PRIMA che la transazione t venga eseguita.
 
-        r_t = sigma_f * X_t + eta_t
-        X_t = sum_{l=0}^{L-1} (l+1)^{-beta} * epsilon_{t-l} * v_{t-l}^delta
-        P_t = P_{t-1} * exp(r_t)
+    Semantica:
+        r_t = log(P_{t+1} / P_t) = effetto del trade t sul prezzo
+            = sigma_f * X_t + eta_t
+        X_t = sum_{l=0}^{L-1} G(l) * epsilon_{t-l} * v_{t-l}^delta
 
-    P0 e' il prezzo ASSOLUTO iniziale del giorno (es. 150.32), NON il log-prezzo.
+    Quindi:
+        prices[0] = P0                                (prima del trade 0)
+        prices[t] = P0 * exp(sum_{s=0}^{t-1} r_s)    (prima del trade t)
 
-    Returns
-    -------
-    prices : float64 array (T,) — prezzi assoluti post-trade P_1, ..., P_T
+    Coerenza con calibrate_tim:
+        La calibrazione fitta r_t = log(P[t+1]/P[t]) ~ sigma_f * X_t
+        dove X_t e' costruito con lag-0 = trade t (stessa _build_impact_signal).
+        Qui usiamo la stessa X_t per r_t, poi shiftiamo di 1:
+            prices[t+1] = prices[t] * exp(r_t)
     """
+    T = len(signs)
+
+    # r_t: log-rendimento causato dal trade t  (lag-0 = trade t, coerente con calibrazione)
     X       = _build_impact_signal(signs, volumes, beta, delta, kernel_L)
-    log_ret = sigma_f * X + rng.normal(0.0, sigma_eta, len(signs))
-    # P_t = P_0 * exp( sum_{s=1}^{t} r_s )
-    return P0 * np.exp(np.cumsum(log_ret))
+    log_ret = sigma_f * X + rng.normal(0.0, sigma_eta, T)   # r_0, ..., r_{T-1}
+
+    # prices[t] = prezzo PRIMA del trade t
+    #   prices[0] = P0
+    #   prices[1] = P0 * exp(r_0)
+    #   prices[t] = P0 * exp(r_0 + ... + r_{t-1})
+    prices    = np.empty(T, dtype=float)
+    prices[0] = P0
+    if T > 1:
+        prices[1:] = P0 * np.exp(np.cumsum(log_ret[:-1]))
+
+    return prices
 
 
 # ---------------------------------------------------------------------------
@@ -362,18 +380,18 @@ def run(data_dir  = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir  = r"..\database\data",
-        out_dir   = r"..\database\data_synthetic",
+        out_dir   = r"..\database\data_lmf_tim_lin",
 
         # LMF
         alpha     = 1.5,    # esponente Pareto (1 < alpha < 2 -> memoria lunga)
-        n_traders = 10,     # pool di trader
+        n_traders = 50,     # pool di trader
 
         # AR log-volumi
         ar_order  = 1000,   # ridotto auto se dati reali insufficienti
 
         # TIM
-        beta      = 0.3,    # esponente decadimento kernel power-law
-        delta     = 0.5,    # esponente impact (0.5 = square-root)
+        beta      = 0.25,    # esponente decadimento kernel power-law
+        delta     = 1.0,    # esponente impact (0.5 = square-root)
         # sigma_f e sigma_eta: calibrati automaticamente dai dati reali
 
         kernel_L  = 500,    # memoria massima kernel (in trade)

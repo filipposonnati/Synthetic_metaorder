@@ -110,5 +110,5 @@ plt.ylabel(r'$I(Q)$')
 plt.legend()
 plt.grid(True, which="both", ls="-")
 
-plt.savefig(f'images\\{image_name}.png')
+plt.savefig(f'images\\impact_volume_curve\\{image_name}.png')
 plt.show()

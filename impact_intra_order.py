@@ -98,6 +98,9 @@ def bin_log(series: pd.Series, n_bins: int = 51):
 def bin_linear_cubic(n_bins: int = 21):
     return np.linspace(0, 1, n_bins)**3
 
+def bin_linear_quadratic(n_bins: int = 21):
+    return np.linspace(0, 1, n_bins)**2
+
 def bin_linear(n_bins: int = 26):
     return np.linspace(0, 1, n_bins)
 
@@ -155,7 +158,8 @@ def analyse_cumulative(trades: pd.DataFrame, function: str, model: str):
 
     # ── Plot ──
     fig, ax1 = plt.subplots(figsize=(8, 6))
-    ax1.plot(x, y, linestyle='', marker='o', label='Binned data', zorder=3)
+    ax1.errorbar(x, y, xerr=x_err, yerr=y_err,
+                 linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
     x_th = np.logspace(np.log10(1e-7), np.log10(2e-3), 100)
     ax1.plot(x_th, Y * x_th**delta,
@@ -189,7 +193,7 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
     df['Ratio']           = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
-    bins    = bin_linear_cubic()
+    bins    = bin_linear_quadratic()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
 
     x     = grouped['x_mean'].to_numpy()
@@ -217,7 +221,8 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
 
     # ── Plot ──
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(x, y, linestyle='', marker='o', label='Binned data', zorder=3)
+    ax.errorbar(x, y, xerr=x_err, yerr=y_err,
+                linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
     x_th = np.linspace(0.0, 1.0, 50)
     ax.plot(x_th, Y * np.sqrt(x_th),
@@ -242,11 +247,12 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
     df['Ratio']           = df['PartialImpact'] / np.sqrt(df['PartialVolume'])
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
-    bins    = bin_linear()
+    bins    = bin_linear_quadratic()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
 
     x     = grouped['x_mean'].to_numpy()
     y     = grouped['y_mean'].to_numpy()
+    x_err = grouped['x_err'].to_numpy()
     y_err = grouped['y_err'].to_numpy()
 
     popt0, _, perr0 = fit_iterative(constant, x, y, y_err)
@@ -259,7 +265,8 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
 
     # ── Plot ──
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(x, y, linestyle='', marker='o', label='Binned data', zorder=3)
+    ax.errorbar(x, y, xerr=x_err, yerr=y_err,
+                linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
     x_th = np.linspace(0.0, 1.0, 100)
     ax.plot(x_th, np.full(len(x_th), Y),
@@ -296,16 +303,19 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
         subset['Ratio']           = subset['PartialImpact'] / np.sqrt(subset['MetaVolume'])
         subset['NormalizedVolume'] = subset['PartialVolume']  / subset['MetaVolume']
 
-        bins    = np.linspace(0, 1, 31)**2
+        bins    = np.linspace(0, 1, 21)**2
         grouped = group_by_bins(subset, 'NormalizedVolume', 'Ratio', bins)
 
-        ax.plot(
+        ax.errorbar(
             grouped['x_mean'].to_numpy(),
             grouped['y_mean'].to_numpy(),
+            xerr=grouped['x_err'].to_numpy(),
+            yerr=grouped['y_err'].to_numpy(),
             color=colors[idx],
             linestyle=linestyles[idx],
             linewidth=1.5,
             alpha=0.85,
+            capsize=2,
             label=f'n={n_child}',
         )
 
@@ -336,7 +346,7 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
     df['Ratio']            = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
-    bins    = bin_linear_cubic()
+    bins    = bin_linear_quadratic()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
 
     x     = grouped['x_mean'].to_numpy()
@@ -364,7 +374,8 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
 
     # ── Plot ──
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(x, y, linestyle='', marker='o', label='Binned data', zorder=3)
+    ax.errorbar(x, y, xerr=x_err, yerr=y_err,
+                linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
     x_th = np.linspace(0.0, 1.0, 50)
     ax.plot(x_th, Y * np.sqrt(x_th),
@@ -395,14 +406,14 @@ def _save(name: str, model: str, **kwargs):
 
 if __name__ == '__main__':
     function = '20_power_2.0'
-    model    = ''
+    model    = 'var_1000'
     print(f'{function}  {model}')
 
     trades = load_trades(function, model)
 
-    Y_cum, delta_cum, Y_cum_err, delta_cum_err = analyse_cumulative(trades, function, model)
+    #Y_cum, delta_cum, Y_cum_err, delta_cum_err = analyse_cumulative(trades, function, model)
     Y_sqrt, Y_sqrt_err                         = analyse_square_root(trades, function, model)
-    Y_flat, Y_flat_err                         = analyse_flat(trades, function, model)
+    #Y_flat, Y_flat_err                         = analyse_flat(trades, function, model)
 
     analyse_by_nb_child(trades, function, model)
 
@@ -410,7 +421,7 @@ if __name__ == '__main__':
 
     # ── Summary (ready for a LaTeX table) ──
     print('\n── Parameter summary ──')
-    print(f'  Cumulative       : Y = {Y_cum:.6g} ± {Y_cum_err:.6g},  δ = {delta_cum:.6g} ± {delta_cum_err:.6g}')
+    #print(f'  Cumulative       : Y = {Y_cum:.6g} ± {Y_cum_err:.6g},  δ = {delta_cum:.6g} ± {delta_cum_err:.6g}')
     print(f'  Square-root      : Y = {Y_sqrt:.6g} ± {Y_sqrt_err:.6g}')
     print(f'  Square-root ≥5ch : Y = {Y_sqrt5:.6g} ± {Y_sqrt5_err:.6g}')
-    print(f'  Flat             : Y = {Y_flat:.6g} ± {Y_flat_err:.6g}')
+    #print(f'  Flat             : Y = {Y_flat:.6g} ± {Y_flat_err:.6g}')
