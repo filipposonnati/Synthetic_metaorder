@@ -7,6 +7,10 @@ from scipy.stats import sem, kurtosis, norm, multivariate_normal
 from scipy.fft import fft, ifft
 from statsmodels.tsa.stattools import acf
 
+from scipy.stats import linregress
+
+from pathlib import Path
+
 import os
 
 plt.rcParams.update({
@@ -209,8 +213,6 @@ def surrogate_test(all_signs, n_surrogates=200, seed=0):
     p_values = np.mean(np.abs(surr_kurt) >= np.abs(obs_kurt)[:, None], axis=1)
     return obs_kurt, surr_kurt, p_values
 
-
-
 def generate_gaussian_signs(length, acf_path = 'database/acf.npy', p_plus = 0.5, seed=42):
     """
     Legge i file originali, genera segni sintetici con la stessa lunghezza e 
@@ -229,15 +231,177 @@ def generate_gaussian_signs(length, acf_path = 'database/acf.npy', p_plus = 0.5,
     
     return synth_signs
 
+def plot_acf(pooled, all_daily_corrs, gamma):
+    data_matrix = np.array(all_daily_corrs)
+    std_err     = sem(data_matrix, axis=0)
+
+    lags        = np.arange(1, max_lag + 1)
+    pooled_vals = pooled[1:]
+    err_vals    = std_err[1:]
+
+    tail_mask = lags >= 10
+    
+    # Calculate A in log-log space so all lags are weighted equally
+    # $log(y) = log(A) - gamma * log(x)$  -->  $log(A) = log(y) + gamma * log(x)$
+    
+    log_lags = np.log(lags[tail_mask])
+    log_y = np.log(pooled_vals[tail_mask])
+    
+    log_A_fit = np.mean(log_y + gamma * log_lags)
+    A_fit = np.exp(log_A_fit)
+
+    fig1, axes1 = plt.subplots(1, 2, figsize=(18, 6))
+
+    ax = axes1[0]
+    for i, dc in enumerate(all_daily_corrs[:5]):
+        ax.plot(lags, dc[1:], lw=1.0, label=f'Day {i+1}')
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
+    ax.set_title('Daily ACF'); ax.set_xlim([1, 50]); ax.legend(fontsize=9)
+
+    ax = axes1[1]
+    ax.fill_between(lags, pooled_vals - err_vals, pooled_vals + err_vals,
+                    color='steelblue', alpha=0.30, label='SEM')
+    ax.plot(lags, pooled_vals, color='steelblue', lw=1.0, label='Pooled ACF')
+    
+    # Plotting using your exact gamma definition
+    ax.plot(lags, power_law(lags, A_fit, -gamma), color='tomato', lw=2,
+            linestyle='--', label=f'Fit (δ={gamma:.3f})')
+            
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
+    ax.set_title('Pooled ACF'); ax.legend(fontsize=9)
+
+    fig1.tight_layout()
+    
+    # Ensure directory exists before saving
+    os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
+    fig1.savefig(os.path.join('images', 'acf', 'acf_original.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_round_trip(pooled, acf_recon_binary, acf_gauss_target, acf_recon_gauss):
+    fig2, ax = plt.subplots(1, 2, figsize=(18, 6))
+
+    pooled_vals = pooled[1:]
+
+    lags = np.arange(1, max_lag + 1)
+
+    ax[0].plot(lags, pooled_vals, color='steelblue',  lw=1.0, label='Pooled ACF (original)')
+    ax[0].plot(lags, acf_recon_binary[1:], color='red', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
+
+    ax[0].set_title('Binary')
+    ax[0].set_xscale('log')
+    ax[0].set_yscale('log')
+    ax[0].set_xlabel('Lag')
+    ax[0].set_ylabel('ACF')
+    ax[0].legend()
+
+    ax[1].plot(lags, acf_gauss_target[1:], color='blue', lw=1.0, linestyle='-.', label='Van Vleck target')
+    ax[1].plot(lags, acf_recon_gauss[1:], color='darkorange', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
+
+    ax[1].set_title('Gaussian')
+    ax[1].set_xscale('log')
+    ax[1].set_yscale('log')
+    ax[1].set_xlabel('Lag')
+    ax[1].set_ylabel('ACF')
+    ax[1].legend()
+
+    fig2.tight_layout()
+    fig2.savefig('images\\acf\\acf_roundtrip.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+def pooled_dfa(series_list, n_vals=None):
+    """
+    Performs Pooled Detrended Fluctuation Analysis on a list of time series.
+    Assumes all series share the same scaling exponent.
+    """
+    # 1. Set default window sizes (n) based on the length of the shortest series
+    min_len = min(len(s) for s in series_list)
+    if n_vals is None:
+        n_vals = np.unique(np.logspace(np.log10(16), np.log10(min_len // 4), num=20, dtype=int))
+    
+    F_n = []
+    
+    # 2. Loop through each window size n
+    for n in n_vals:
+        total_squared_fluct = 0.0
+        total_segments = 0
+        
+        # 3. Process each series independently for the current window size
+        for x in series_list:
+            N = len(x)
+            # Integrate the series
+            Y = np.cumsum(x - np.mean(x))
+            
+            # Determine number of segments (forward and backward)
+            num_segments = N // n
+            if num_segments == 0:
+                continue
+                
+            # Forward segments
+            for m in range(num_segments):
+                start = m * n
+                end = start + n
+                t = np.arange(n)
+                # Linear fit (DFA1)
+                poly = np.polyfit(t, Y[start:end], 1)
+                trend = np.polyval(poly, t)
+                total_squared_fluct += np.sum((Y[start:end] - trend) ** 2)
+                total_segments += 1
+                
+            # Backward segments to use leftover data
+            for m in range(num_segments):
+                start = N - (m + 1) * n
+                end = start + n
+                t = np.arange(n)
+                poly = np.polyfit(t, Y[start:end], 1)
+                trend = np.polyval(poly, t)
+                total_squared_fluct += np.sum((Y[start:end] - trend) ** 2)
+                total_segments += 1
+        
+        # 4. Calculate the pooled RMS fluctuation for this specific 'n'
+        if total_segments > 0:
+            F_n.append(np.sqrt(total_squared_fluct / (total_segments * n)))
+        else:
+            F_n.append(np.nan)
+            
+    # 5. Linear regression on log-log scale to find alpha
+    # Filter out any NaNs or zeros just in case
+    n_vals, F_n = np.array(n_vals), np.array(F_n)
+    mask = (F_n > 0) & ~np.isnan(F_n)
+    
+    alpha, intercept = np.polyfit(np.log10(n_vals[mask]), np.log10(F_n[mask]), 1)
+
+    # Instead of np.polyfit, use scipy's linregress to get error metrics
+    slope, intercept, r_value, p_value, std_err = linregress(np.log10(n_vals), np.log10(F_n))
+
+    alpha = slope
+    r_squared = r_value**2
+
+    print(f"--- Verification Report ---")
+    print(f"R-squared (Linear Fit Quality): {r_squared:.4f}")
+    print(f"Standard Error of Alpha: {std_err:.4f}")
+
+    # Optional: Diagnostic Plotting built into the function
+    plt.figure()
+    plt.loglog(n_vals, F_n, 'bo-', label='Pooled Fluctuation F(n)')
+    plt.loglog(n_vals, 10**intercept * (n_vals**alpha), 'r--', label=f'Fit (alpha={alpha:.2f}, R²={r_squared:.3f})')
+    plt.xlabel('Window size (n)')
+    plt.ylabel('Fluctuation F(n)')
+    #plt.title('DFA Verification Plot')
+    plt.legend()
+    plt.grid(True, which="both", ls="--")
+    plt.tight_layout()
+    plt.savefig('images\\acf\\dfa_check.png')
+
+    return alpha, n_vals[mask], F_n[mask]
 
 if __name__ == '__main__':
-    # ══════════════════════════════════════════════════════════════════════════════
     # DATA LOADING
-    # ══════════════════════════════════════════════════════════════════════════════
-
     data_dir = 'database\\data'
     paths    = listdir(data_dir)
     max_lag  = 1_000
+
     all_signs       = []
     all_daily_corrs = []
 
@@ -247,42 +411,26 @@ if __name__ == '__main__':
         all_signs.append(signs)
         all_daily_corrs.append(acf(signs, nlags=max_lag, fft=True))
 
-    # ══════════════════════════════════════════════════════════════════════════════
-    # POOLED ACF + ERROR BARS
-    # ══════════════════════════════════════════════════════════════════════════════
+    file_path = Path("database/acf_binary.npy")
+    if file_path.is_file():
+        pooled = np.load("database/acf_binary.npy")
+    else:
+        # POOLED ACF + ERROR BARS
+        pooled = pooled_acf(all_signs, nlags=max_lag)   # one-sided R[0..max_lag]
 
-    pooled      = pooled_acf(all_signs, nlags=max_lag)   # one-sided R[0..max_lag]
-    data_matrix = np.array(all_daily_corrs)
-    std_err     = sem(data_matrix, axis=0)
+        np.save('database/acf_binary.npy', pooled)
 
-    lags        = np.arange(1, max_lag + 1)
-    pooled_vals = pooled[1:]
-    err_vals    = std_err[1:]
+    # Run DFA
+    # 'order=1' corresponds to DFA1 (linear detrending)
+    alpha, scales, fluctuations = pooled_dfa(all_signs)
+    print(f"Pooled DFA Exponent (Alpha): {alpha:.4f}")
+    print(f"Estimated ACF Tail Exponent (Gamma): {-2 + 2*alpha:.4f}")
 
-    np.save('database/acf.npy', pooled)
+    print(f"DFA Exponent (Alpha): {alpha}")
 
-    # ══════════════════════════════════════════════════════════════════════════════
-    # POWER-LAW FITS
-    # ══════════════════════════════════════════════════════════════════════════════
+    plot_acf(pooled, all_daily_corrs, 2 - 2*alpha)
 
-    fit_range_early = np.arange(1, 21)
-    popt_early, pcov_early = curve_fit(power_law, fit_range_early, pooled[1:21])
-    perr_early = np.sqrt(np.diag(pcov_early))
-    print(f"Fit lag  1-20:")
-    print(f"  A     = {popt_early[0]:.6f} ± {perr_early[0]:.6f}")
-    print(f"  delta = {popt_early[1]:.6f} ± {perr_early[1]:.6f}")
-
-    fit_range_late = np.arange(21, max_lag + 1)
-    popt_late, pcov_late = curve_fit(power_law, fit_range_late, pooled[21:])
-    perr_late = np.sqrt(np.diag(pcov_late))
-    print(f"Fit lag 21-{max_lag}:")
-    print(f"  A     = {popt_late[0]:.6f} ± {perr_late[0]:.6f}")
-    print(f"  delta = {popt_late[1]:.6f} ± {perr_late[1]:.6f}")
-
-    # ══════════════════════════════════════════════════════════════════════════════
     # RECONSTRUCTION: van Vleck → Gaussian → binary
-    # ══════════════════════════════════════════════════════════════════════════════
-
     all_signs_concat = np.concatenate(all_signs)
     p_plus = float(np.mean(all_signs_concat > 0))
     print(f"\nEmpirical p(+1) = {p_plus:.4f}")
@@ -290,6 +438,8 @@ if __name__ == '__main__':
     # Step 1 — invert van Vleck: binary ACF → Gaussian ACF
     print("Inverting van Vleck relation")
     acf_gauss_target = van_vleck_invert(pooled, p_plus=p_plus)
+
+    np.save('database/acf_gaussian.npy', pooled)
 
     # Step 2 — reconstruct Gaussian signal
     N_REAL  = 250
@@ -313,66 +463,5 @@ if __name__ == '__main__':
     for k in range(1, 6):
         print(f"  {k:>4}  {pooled[k]:>12.5f}  {acf_gauss_target[k]:>15.5f}  "
             f"{acf_recon_binary[k]:>12.5f}")
-
-    # ══════════════════════════════════════════════════════════════════════════════
-    # FIGURE 1 — Daily ACF  +  Pooled ACF with fits
-    # ══════════════════════════════════════════════════════════════════════════════
-
-    fig1, axes1 = plt.subplots(1, 2, figsize=(18, 6))
-
-    # ── (0) Daily ACF ─────────────────────────────────────────────────────────────
-    ax = axes1[0]
-    for i, dc in enumerate(all_daily_corrs[:5]):
-        ax.plot(lags, dc[1:], lw=1.0, label=f'Day {i+1}')
-    ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
-    ax.set_title('Daily ACF'); ax.set_xlim([1, 50]); ax.legend(fontsize=9)
-
-    # ── (1) Pooled ACF + fits ─────────────────────────────────────────────────────
-    ax = axes1[1]
-    ax.fill_between(lags, pooled_vals - err_vals, pooled_vals + err_vals,
-                    color='steelblue', alpha=0.30, label='SEM')
-    ax.plot(lags, pooled_vals, color='steelblue', lw=1.0, label='Pooled ACF')
-    ax.plot(fit_range_early, power_law(fit_range_early, *popt_early),
-            color='tomato', lw=2, linestyle='--',
-            label=f'Fit lag 1-20  (δ={popt_early[1]:.3f})')
-    ax.plot(fit_range_late, power_law(fit_range_late, *popt_late),
-            color='darkorange', lw=2, linestyle='--',
-            label=f'Fit lag 21-{max_lag}  (δ={popt_late[1]:.3f})')
-    ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
-    ax.set_title('Pooled ACF'); ax.legend(fontsize=9)
-
-    fig1.tight_layout()
-    fig1.savefig('images\\acf_original.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # ══════════════════════════════════════════════════════════════════════════════
-    # FIGURE 2 — ACF round-trip verification
-    # ══════════════════════════════════════════════════════════════════════════════
-
-    fig2, ax = plt.subplots(1, 2, figsize=(18, 6))
-
-    ax[0].plot(lags, pooled_vals, color='steelblue',  lw=1.0, label='Pooled ACF (original)')
-    ax[0].plot(lags, acf_recon_binary[1:], color='red', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
-
-    ax[0].set_title('Binary')
-    ax[0].set_xscale('log')
-    ax[0].set_yscale('log')
-    ax[0].set_xlabel('Lag')
-    ax[0].set_ylabel('ACF')
-    ax[0].legend()
-
-    ax[1].plot(lags, acf_gauss_target[1:], color='blue', lw=1.0, linestyle='-.', label='Van Vleck target')
-    ax[1].plot(lags, acf_recon_gauss[1:], color='darkorange', lw=1.0, linestyle=':', label=f'ACF of reconstructed signal')
-
-    ax[1].set_title('Gaussian')
-    ax[1].set_xscale('log')
-    ax[1].set_yscale('log')
-    ax[1].set_xlabel('Lag')
-    ax[1].set_ylabel('ACF')
-    ax[1].legend()
-
-    fig2.tight_layout()
-    fig2.savefig('images\\acf_roundtrip.png', dpi=300, bbox_inches='tight')
-    plt.close()
+        
+    plot_round_trip(pooled, acf_recon_binary, acf_gauss_target, acf_recon_gauss)
