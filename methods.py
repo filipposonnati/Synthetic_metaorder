@@ -230,7 +230,7 @@ def mapping_function(trades, nb_traders, kind, alpha = 0.0):
 
 if __name__ == "__main__":
     nb_traders = 20
-    result = mapping_function(np.full(10000000, 0.0), nb_traders, 'uniform', 2.0)
+    result = mapping_function(np.full(100000000, 0.0), nb_traders, 'power', 2.0)
     
     # Ordiniamo le etichette per l'asse X (Trader 1, Trader 2, ...)
     labels = [f"Trader {i+1}" for i in range(nb_traders)]
@@ -238,4 +238,6 @@ if __name__ == "__main__":
     
     plt.bar(labels, counts)
     plt.xticks(rotation=45)
+    plt.xscale('log')
+    plt.yscale('log')
     plt.show()
