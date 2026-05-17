@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = "lmf_tim_lin"
+model = ""
 
 data_dir = 'database\\data'
 

@@ -212,10 +212,11 @@ def generate_slim(path, nb_traders, kind, exponent, data_dir='database\\data'):
 def mapping_function(trades, nb_traders, kind, alpha = 0.0):
     if kind == 'power':
         shape = float(alpha) if float(alpha) > 0 else 1.5
-        # Zipf / rank-size law: w(k) ∝ k^{-shape}
-        # Deterministic weights → rank-share log-log slope is exactly -shape
-        ranks = np.arange(1, int(nb_traders) + 1)
-        samples = ranks.astype(float) ** (-shape)   # already descending (rank 1 is largest)
+        # scipy.stats.powerlaw is bounded on [0,1] with PDF f(x) = alpha * x^(alpha-1)
+        # alpha < 1 → skewed toward 0 (few traders dominate)
+        # alpha > 1 → skewed toward 1 (more uniform)
+        samples = powerlaw.rvs(shape, size=int(nb_traders))
+        samples = np.sort(samples)[::-1]  # descending: higher weight → lower trader index
     elif kind == 'uniform':
         samples = np.ones(int(nb_traders))
     else:
@@ -233,16 +234,19 @@ def verify_distributions(nb_traders=20, n_samples=500_000, power_exponent=2.0):
     """
     Verify that mapping_function produces the expected distributions:
       - 'uniform': all traders get roughly equal share  → chi-squared test
-      - 'power':   trader weights are exact Zipf w(k) = k^{-alpha}
-                   → log-log slope check, R², chi-squared vs theoretical shares
+      - 'power':   trader weights follow scipy.stats.powerlaw(alpha) on [0,1]
+                   → KS test against powerlaw CDF + log-log linearity of rank-share
 
     Parameters
     ----------
     nb_traders     : number of traders
     n_samples      : number of trade assignments to draw
-    power_exponent : Zipf exponent α — slope of the rank-share log-log line
+    power_exponent : shape parameter passed to scipy.stats.powerlaw.rvs
+                     PDF: f(x) = alpha * x^(alpha-1) on [0,1]
+                     alpha < 1 → concentrated near 0 (heavy skew, few traders dominate)
+                     alpha > 1 → concentrated near 1 (mild skew, more uniform)
     """
-    from scipy.stats import chisquare
+    from scipy.stats import chisquare, kstest, powerlaw as sp_powerlaw
 
     dummy_trades = pd.DataFrame({'timestamp': range(n_samples),
                                  'sign': np.ones(n_samples)})
@@ -272,55 +276,59 @@ def verify_distributions(nb_traders=20, n_samples=500_000, power_exponent=2.0):
           f"Expected  : {1/nb_traders:.4f}")
 
     # ------------------------------------------------------------------ #
-    #  2. POWER LAW  (Zipf: deterministic weights w(k) ∝ k^{-alpha})     #
+    #  2. POWER LAW  (scipy.stats.powerlaw)                               #
     # ------------------------------------------------------------------ #
     result_power = mapping_function(dummy_trades, nb_traders, 'power', power_exponent)
     counts_power = np.array([result_power.count(l) for l in labels], dtype=float)
     shares_power = counts_power / counts_power.sum()
 
-    # Trader shares are already in order (Trader 1 = rank 1 = highest weight)
-    observed_shares = shares_power  # keep in trader-index order
+    # Sort descending: highest-weight trader first (mirrors mapping_function sort)
+    observed_shares_sorted = np.sort(shares_power)[::-1]
 
-    # Theoretical Zipf weights (normalised), exact by construction
+    # KS test: fit scipy.stats.powerlaw to the raw weight samples.
+    # Because weights are normalised, we recover the underlying samples by
+    # rescaling observed shares back to [0,1] range for the fit.
+    weights_rescaled = observed_shares_sorted / observed_shares_sorted.max()
+    fit_alpha, fit_loc, fit_scale = sp_powerlaw.fit(weights_rescaled, floc=0, fscale=1)
+    ks_stat, ks_p = kstest(
+        weights_rescaled,
+        lambda x: sp_powerlaw.cdf(x, fit_alpha, loc=fit_loc, scale=fit_scale)
+    )
+
+    # Log-log linearity (Zipf / rank-size): rank vs share linear on log-log axes
     ranks = np.arange(1, nb_traders + 1)
-    zipf_weights = ranks.astype(float) ** (-power_exponent)
-    theoretical_shares = zipf_weights / zipf_weights.sum()
-
-    # Log-log slope: should be exactly -power_exponent
     log_ranks  = np.log(ranks)
-    log_shares = np.log(observed_shares)
+    log_shares = np.log(observed_shares_sorted)
     slope, intercept = np.polyfit(log_ranks, log_shares, 1)
     ss_res = np.sum((log_shares - (slope * log_ranks + intercept)) ** 2)
     ss_tot = np.sum((log_shares - log_shares.mean()) ** 2)
     r2 = 1 - ss_res / ss_tot
 
-    # Max absolute deviation between observed and theoretical shares
-    max_dev = np.abs(observed_shares - theoretical_shares).max()
-    mean_dev = np.abs(observed_shares - theoretical_shares).mean()
-
-    # Chi-squared: observed counts vs theoretical frequencies
-    chi2_stat_pw, chi2_p_pw = chisquare(
-        counts_power, f_exp=theoretical_shares * counts_power.sum()
-    )
+    # Expected mean and variance of powerlaw(alpha) on [0,1]
+    expected_mean = power_exponent / (power_exponent + 1)
+    expected_var  = power_exponent / ((power_exponent + 2) * (power_exponent + 1) ** 2)
 
     print()
     print("=" * 60)
-    print(f"POWER-LAW VERIFICATION  (Zipf, α={power_exponent})")
+    print(f"POWER-LAW DISTRIBUTION VERIFICATION  (scipy.stats.powerlaw, α={power_exponent})")
     print("=" * 60)
-    print(f"  Weights: w(k) = k^(-α), exact by construction")
-    print(f"  Log-log slope          : {slope:.6f}  (expected: {-power_exponent:.6f})")
-    print(f"  Log-log R²             : {r2:.6f}")
-    if abs(slope - (-power_exponent)) < 0.05 and r2 > 0.999:
-        print("  ✓ Slope matches -α exactly and R² ≈ 1 (perfect power law)")
+    print(f"  scipy.stats.powerlaw PDF: f(x) = α·x^(α-1) on [0,1]")
+    print(f"  Expected mean of weights : {expected_mean:.4f}  "
+          f"Observed mean : {weights_rescaled.mean():.4f}")
+    print(f"  Expected var  of weights : {expected_var:.6f}  "
+          f"Observed var  : {weights_rescaled.var():.6f}")
+    print(f"  Fitted α (KS fit)        : {fit_alpha:.4f}  (input: {power_exponent:.4f})")
+    print(f"  KS statistic             : {ks_stat:.4f}")
+    print(f"  KS p-value               : {ks_p:.4f}")
+    if ks_p > 0.05:
+        print("  ✓ Cannot reject powerlaw fit (p > 0.05)")
     else:
-        print("  ✗ Slope or R² deviated — check implementation")
-    print(f"  Max |observed - theoretical| share : {max_dev:.6f}")
-    print(f"  Mean |observed - theoretical| share: {mean_dev:.6f}")
-    print(f"  Chi-squared p-value (vs Zipf)      : {chi2_p_pw:.4f}")
-    if chi2_p_pw > 0.05:
-        print("  ✓ Observed frequencies consistent with Zipf(α) weights (p > 0.05)")
+        print("  ✗ Significant deviation from powerlaw(α) (p ≤ 0.05)")
+    print(f"  Log-log slope (Zipf)     : {slope:.4f}  (R² = {r2:.4f})")
+    if r2 > 0.90:
+        print("  ✓ Strong log-log linearity (R² > 0.90)")
     else:
-        print("  ✗ Observed frequencies deviate from Zipf(α) — increase n_samples")
+        print("  ✗ Weak log-log linearity")
 
     # ------------------------------------------------------------------ #
     #  3. PLOTS                                                            #
@@ -341,45 +349,50 @@ def verify_distributions(nb_traders=20, n_samples=500_000, power_exponent=2.0):
     # Uniform: deviation from expected
     ax = axes[0, 1]
     deviations = shares_uniform - 1 / nb_traders
-    colors_u = ['tomato' if d < 0 else 'seagreen' for d in deviations]
-    ax.bar(trader_idx, deviations * 100, color=colors_u, alpha=0.8)
+    colors = ['tomato' if d < 0 else 'seagreen' for d in deviations]
+    ax.bar(trader_idx, deviations * 100, color=colors, alpha=0.8)
     ax.axhline(0, color='black', lw=1)
     ax.set_title("Uniform – deviation from expected (%)")
     ax.set_xlabel("Trader index")
     ax.set_ylabel("Δ share (pp)")
 
-    # Power-law: rank–share log-log with exact theoretical line
+    # Power-law: rank–share log-log plot with fit line
     ax = axes[1, 0]
-    ax.scatter(ranks, observed_shares, color='darkorange', zorder=3, label='Observed shares')
-    ax.plot(ranks, theoretical_shares, 'k--', lw=2,
-            label=f'Theoretical Zipf(α={power_exponent})')
+    ax.scatter(ranks, observed_shares_sorted, color='darkorange', zorder=3, label='Observed shares')
     fit_line = np.exp(intercept) * ranks ** slope
-    ax.plot(ranks, fit_line, 'b:', lw=1.5,
-            label=f'Log-log fit  slope={slope:.3f}  R²={r2:.4f}')
+    ax.plot(ranks, fit_line, 'k--', lw=2,
+            label=f'Log-log fit  slope={slope:.2f}  R²={r2:.3f}')
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.set_title(f"Power-law – rank vs share (log-log)\n"
-                 f"slope={slope:.4f}  expected={-power_exponent:.4f}  R²={r2:.4f}")
+    ax.set_title(f"Power-law – rank vs share (log-log)\n(KS p={ks_p:.3f})")
     ax.set_xlabel("Rank")
     ax.set_ylabel("Share")
     ax.legend(fontsize=8)
 
-    # Power-law: observed vs theoretical shares bar comparison
+    # Power-law: sorted bar + theoretical powerlaw PDF overlay on rescaled weights
     ax = axes[1, 1]
-    width = 0.4
-    ax.bar(ranks - width/2, observed_shares, width, color='darkorange', alpha=0.8, label='Observed')
-    ax.bar(ranks + width/2, theoretical_shares, width, color='navy', alpha=0.6, label='Theoretical Zipf')
-    ax.set_yscale('log')
-    ax.set_title(f"Power-law – observed vs theoretical shares\n(χ² p={chi2_p_pw:.3f})")
-    ax.set_xlabel("Rank (trader index)")
-    ax.set_ylabel("Share (log scale)")
-    ax.legend(fontsize=8)
+    ax.bar(trader_idx, observed_shares_sorted, color='darkorange', alpha=0.7, label='Observed')
+    ax2 = ax.twinx()
+    x_grid = np.linspace(1e-3, 1, 200)
+    ax2.plot(
+        np.linspace(1, nb_traders, 200),
+        sp_powerlaw.pdf(x_grid[::-1], fit_alpha),   # reversed: rank 1 = highest weight
+        color='navy', lw=2, label=f'powerlaw PDF (α={fit_alpha:.2f})'
+    )
+    ax.set_title(f"Power-law – sorted shares + fitted PDF\n"
+                 f"(input α={power_exponent}, fitted α={fit_alpha:.2f})")
+    ax.set_xlabel("Rank")
+    ax.set_ylabel("Observed share", color='darkorange')
+    ax2.set_ylabel("PDF value", color='navy')
+    lines1, lab1 = ax.get_legend_handles_labels()
+    lines2, lab2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, lab1 + lab2, fontsize=8)
 
     plt.tight_layout()
-    plt.savefig("images\\distribution_verification.png", dpi=150)
+    plt.savefig("images\\distribution_verification_powerlaw.png", dpi=150)
     plt.show()
     print("\nPlot saved to distribution_verification.png")
 
 
 if __name__ == "__main__":
-    verify_distributions(nb_traders=20, n_samples=10_000_000, power_exponent=2.0)
+    verify_distributions(nb_traders=20, n_samples=100_000_000, power_exponent=2.0)
