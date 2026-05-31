@@ -17,6 +17,14 @@ plt.rcParams.update({
     'legend.fontsize': 14     # Legenda
 })
 
+def get_marker(kind):
+    if kind == 'power':
+        return '.'
+    elif kind == 'uniform':
+        return 'x'
+    else:
+        return 's'
+
 model = ""
 
 dir = 'database\\meta'
@@ -97,7 +105,7 @@ for path in paths:
 
     #print(f'path: {path}')
 
-    plt.plot(x, y, linestyle="", marker=".", label = f"{label}")
+    plt.plot(x, y, linestyle="", marker=get_marker(kind), label = f"{label}")
 
 x_theoretical = np.linspace(1e-6, 1e-3, 2)
 #plt.plot(x_theoretical, np.sqrt(x_theoretical), label=r'$y = \sqrt{x}$', linestyle=':', color = "black")

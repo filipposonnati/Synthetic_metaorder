@@ -4,8 +4,9 @@ from os import listdir
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
+import numpy as np
 
-from corr import generate_gaussian_signs
+from series_gaussian import generate_binary_sequence
 from lmf import simulate_lmf, simulate_lmf_lambda
 
 def compute_run_length_distribution(sequence: List[int]) -> Dict[int, int]:
@@ -119,8 +120,14 @@ def read_data():
 if __name__ == "__main__":
     rld = read_data()
 
-    gaussian_signs = generate_gaussian_signs(10_000_000)
-    gaussian_rld = compute_run_length_distribution(gaussian_signs)
+    pooled     = np.load('database/acf_binary.npy')
+    p_plus     = float(np.load('database/p_plus.npy'))
+    median_len = int(np.load('database/median_len.npy'))
+
+    gaussian_signs, _ = generate_binary_sequence(
+        pooled, p_plus=p_plus, N=10_000_000, n_realizations=1, seed=42
+    )
+    gaussian_rld = compute_run_length_distribution(gaussian_signs[0])
 
     lmf_signs = simulate_lmf(1.5, 10, 10_000_000)
     lmf_rld = compute_run_length_distribution(lmf_signs)
@@ -130,12 +137,12 @@ if __name__ == "__main__":
 
     plot_run_length_distributions(
         distributions=[rld, gaussian_rld, lmf_rld, lmf_rld_lambda],
-        labels=["Real Data", "Gaussian", "LMF", r"LMF $\lambda$"],
+        labels=["Real Data", "Gaussian", r"LMF $\alpha$ = 1.5 n = 10", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.5"],
         log_scale=True
     )
 
     plot_run_length_distributions(
         distributions=[rld, gaussian_rld, lmf_rld, lmf_rld_lambda],
-        labels=["Real Data", "Gaussian", "LMF", r"LMF $\lambda$"],
+        labels=["Real Data", "Gaussian", r"LMF $\alpha$ = 1.5 n = 10", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.5"],
         log_scale=False
     )

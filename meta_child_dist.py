@@ -38,7 +38,6 @@ def build_filename(nb_traders: int, kind: str, exponent: float) -> str:
 def results_path(results_dir: str, stem: str) -> str:
     return os.path.join(results_dir, f"realizations_{stem}.npz")
 
-
 def load_data(results_dir: str, nb_traders: int, kind: str,
               exponent: float) -> tuple[int, np.ndarray]:
     """Load iterations count and NbChild array from the .npz file."""
@@ -53,21 +52,16 @@ def load_data(results_dir: str, nb_traders: int, kind: str,
 
     archive    = np.load(filepath)
     iterations = int(archive['iterations'])
-    data       = archive['data']
+    # ADD .ravel() HERE TO FLATTEN IT
+    data       = archive['data'].ravel() 
+    
     print(f"[load]  {filepath}")
     print(f"        Iterations   : {iterations}")
     print(f"        Realizations : {len(data):,}")
     return iterations, data
 
-
 def load_all(directory: str) -> dict[str, tuple[int, np.ndarray]]:
-    """
-    Scan directory for all .npz files and load each one.
-
-    Returns
-    -------
-    dict mapping filename stem (e.g. '4_uniform') to (iterations, data).
-    """
+    """Scan directory for all .npz files and load each one."""
     if not os.path.exists(directory):
         raise FileNotFoundError(f"Directory '{directory}' not found.")
 
@@ -81,12 +75,13 @@ def load_all(directory: str) -> dict[str, tuple[int, np.ndarray]]:
         filepath = os.path.join(directory, fname)
         archive  = np.load(filepath)
         iterations = int(archive['iterations'])
-        data       = archive['data']
+        # ADD .ravel() HERE TO FLATTEN IT
+        data       = archive['data'].ravel()
+        
         print(f"[load]  {filepath}  |  iter={iterations}  |  n={len(data):,}")
         results[stem] = (iterations, data)
 
     return results
-
 
 # ---------------------------------------------------------------------------
 # CCDF helper
@@ -108,14 +103,11 @@ def compute_ccdf(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def run_ks_test(data_b: np.ndarray, data_s: np.ndarray) -> dict:
     """
     Run a two-sample KS test between data_b (real) and data_s (simulated).
-
-    Returns a dict with:
-      - stat   : KS statistic D
-      - p      : p-value
-      - x_D    : x-value where max separation occurs (on the shared ECDF grid)
-      - ecdf_b : ECDF of real data at x_D
-      - ecdf_s : ECDF of simulated data at x_D
     """
+    # FORCE BOTH ARRAYS TO BE 1D TO PREVENT BROADCASTING MEMORY ERRORS
+    data_b = data_b.ravel()
+    data_s = data_s.ravel()
+
     stat, p = ks_2samp(data_b, data_s)
 
     # Locate the x where |ECDF_real - ECDF_sim| is maximised
@@ -136,7 +128,6 @@ def run_ks_test(data_b: np.ndarray, data_s: np.ndarray) -> dict:
         'ecdf_b': ecdf_b_vals[max_idx],
         'ecdf_s': ecdf_s_vals[max_idx],
     }
-
 
 # ---------------------------------------------------------------------------
 # Fit & plot (single configuration)
@@ -268,6 +259,142 @@ def plot_all(results_dir: str) -> None:
     fig.savefig('images\\meta_child_dist\\dist_meta_child_all.png', dpi=300)
     plt.close()
 
+# ---------------------------------------------------------------------------
+# Compare real signs vs all simulated variants (Grid without KS test)
+# ---------------------------------------------------------------------------
+
+def compare_all_distributions_grid(base_dir: Path, real_subdir: str,
+                                   nb_traders: int = None, kind: str = None,
+                                   exponent: float = None) -> None:
+    """
+    Scan base_dir for every subdirectory whose name starts with 'meta_child_dist'.
+    Plots all configurations together in a dynamically scaled multi-panel grid 
+    (rows = configurations, cols = PDF | CCDF), omitting any KS tests.
+    """
+    # ── Resolve target stem when a specific configuration is requested ────────
+    target_stem = build_filename(nb_traders, kind, exponent) if nb_traders is not None else None
+
+    # ── Discover directories ─────────────────────────────────────────────────
+    all_dirs = sorted(
+        d for d in base_dir.iterdir()
+        if d.is_dir() and d.name.startswith('meta_child_dist')
+    )
+
+    real_dir  = base_dir / real_subdir
+    sim_dirs  = [d for d in all_dirs if d != real_dir]
+
+    if not real_dir.exists():
+        raise FileNotFoundError(
+            f"Real-signs directory '{real_dir}' not found."
+        )
+    if not sim_dirs:
+        print("[compare] No simulated variant directories found. Nothing to compare.")
+        return
+
+    print(f"\n[compare] Baseline : {real_dir}")
+    print(f"[compare] Variants  : {[d.name for d in sim_dirs]}\n")
+
+    # ── Load data ────────────────────────────────────────────────────────────
+    def _load_stem(directory: str) -> dict[str, np.ndarray]:
+        if target_stem is not None:
+            filepath = results_path(directory, target_stem)
+            if not os.path.exists(filepath):
+                return {}
+            archive = np.load(filepath)
+            return {target_stem: archive['data']}
+        return {stem: data for stem, (_, data) in load_all(directory).items()}
+
+    real_data: dict[str, np.ndarray] = _load_stem(str(real_dir))
+
+    sim_datasets: dict[str, dict[str, np.ndarray]] = {}
+    for sim_dir in sim_dirs:
+        try:
+            sim_datasets[sim_dir.name] = _load_stem(str(sim_dir))
+        except Exception as e:
+            print(f"[warn] {e}")
+
+    # ── Union of stems present in the real data ───────────────────────────────
+    stems = sorted(real_data.keys())
+    if target_stem is not None:
+        if target_stem not in stems:
+            raise ValueError(f"Stem '{target_stem}' not found in real-signs directory.")
+        stems = [target_stem]
+    if not stems:
+        print("[compare] No stems found in real-signs directory.")
+        return
+
+    # ── Colour palette setup ──────────────────────────────────────────────────
+    variant_names  = list(sim_datasets.keys())
+    variant_colors = plt.cm.tab10.colors
+    variant_style  = {
+        name: dict(linestyle='', marker='o', markersize=3.5,
+                   color=variant_colors[i % len(variant_colors)], alpha=0.85,
+                   label=name)
+        for i, name in enumerate(variant_names)
+    }
+    real_style = dict(linestyle='', marker='o', markersize=3.5,
+                      color='black', alpha=0.9, label=real_subdir)
+
+    # ── Build figure with variable scaling to handle multiple rows ────────────
+    n = len(stems)
+    fig = plt.figure(figsize=(13, 4.5 * n))
+    gs = gridspec.GridSpec(n, 2, figure=fig, hspace=0.35, wspace=0.25)
+
+    def _pdf_ccdf(data: np.ndarray):
+        bins              = np.arange(1, max(data) + 2)
+        counts, bin_edges = np.histogram(data, bins=bins, density=True)
+        x_pdf             = bin_edges[:-1]
+        x_ccdf, ccdf      = compute_ccdf(data)
+        return x_pdf, counts, x_ccdf, ccdf
+
+    for row, stem in enumerate(stems):
+        ax_pdf  = fig.add_subplot(gs[row, 0])
+        ax_ccdf = fig.add_subplot(gs[row, 1])
+
+        # Configure subplots, labels, and corrected CCDF LaTeX syntax
+        for ax, ylabel, col_title in [
+            (ax_pdf,  f'{stem}\nP(x)', f'PDF'),
+            (ax_ccdf, r'$P(X \geq x)$',  f'CCDF'),
+        ]:
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            ax.set_xlabel('x')
+            ax.set_ylabel(ylabel)
+            ax.grid(True, linewidth=0.4, linestyle='--', alpha=0.6)
+            if row == 0:
+                ax.set_title(col_title, fontsize=12, pad=8)
+
+        # ── Plot real distribution ────────────────────────────────────────
+        data_real = real_data[stem]
+        x_pdf_r, cnt_r, x_ccdf_r, ccdf_r = _pdf_ccdf(data_real)
+        ax_pdf.plot(x_pdf_r,   cnt_r,  **real_style)
+        ax_ccdf.plot(x_ccdf_r, ccdf_r, **real_style)
+
+        # ── Plot each simulated variant ───────────────────────────────────
+        for variant_name, sim_data_dict in sim_datasets.items():
+            if stem not in sim_data_dict:
+                continue
+
+            data_sim = sim_data_dict[stem]
+            style    = variant_style[variant_name]
+
+            x_pdf_s, cnt_s, x_ccdf_s, ccdf_s = _pdf_ccdf(data_sim)
+            ax_pdf.plot(x_pdf_s,   cnt_s,  **style)
+            ax_ccdf.plot(x_ccdf_s, ccdf_s, **style)
+
+        # Show legend ONLY in the first configuration row
+        if row == 0:
+            ax_pdf.legend(fontsize=8, framealpha=0.4, loc='lower left')
+            ax_ccdf.legend(fontsize=8, framealpha=0.4, loc='lower left')
+
+    # Resolve folder generation to prevent FileNotFoundError bugs on saving
+    out_fname = f'meta_child_dist/compare_real_vs_simulated_{target_stem}.png' if target_stem else 'meta_child_dist/compare_real_vs_simulated_all.png'
+    out_path = os.path.join('images', out_fname)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    
+    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    print(f"[save]  {out_path}")
+    plt.show()
 
 # ---------------------------------------------------------------------------
 # Compare real signs vs all simulated variants  (with KS test)
@@ -373,7 +500,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 
     # ── Build figure ─────────────────────────────────────────────────────────
     n     = len(stems)
-    fig   = plt.figure(figsize=(13, 6))
+    fig   = plt.figure()
     gs    = gridspec.GridSpec(
         n, 2,
         figure=fig
@@ -451,7 +578,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
     print("=" * 65 + "\n")
 
     os.makedirs('images', exist_ok=True)
-    out_fname = f'meta_child_dist/compare_real_vs_simulated_{target_stem}.png' if target_stem else 'compare_real_vs_simulated.png'
+    out_fname = f'meta_child_dist/compare_real_vs_simulated_{target_stem}.png' if target_stem else 'meta_child_dist/compare_real_vs_simulated.png'
     out_path = os.path.join('images', out_fname)
     fig.savefig(out_path, dpi=300)
     print(f"[save]  {out_path}")
@@ -464,5 +591,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 if __name__ == '__main__':
     #plot_all(results_dir)
 
+    compare_all_distributions_grid(BASE_DIR, REAL_SUBDIR)
+
     # To compare a single configuration:
-    compare_all_distributions(BASE_DIR, REAL_SUBDIR, nb_traders=20, kind='power', exponent=2.0)
+    #compare_all_distributions(BASE_DIR, REAL_SUBDIR, nb_traders=20, kind='power', exponent=2.0)

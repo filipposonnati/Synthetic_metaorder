@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from os import listdir
 from scipy.stats import sem
-from scipy.fft import fft
 from statsmodels.tsa.stattools import acf
 from scipy.stats import linregress
 from pathlib import Path
@@ -32,19 +31,34 @@ def power_law(x, A, delta):
 
 def pooled_acf(series_list, nlags):
     """
-    Estimates ACF by aggregating autocovariances from all series
-    before computing the ratio. More statistically correct than
-    averaging individual ACFs.
-    Returns one-sided R[0..nlags], normalized so R[0]=1.
+    Estimates the pooled ACF by aggregating per-series autocovariances
+    (each normalized by its own N) before taking the global ratio.
+
+    This is statistically correct: it is equivalent to weighting each
+    series by its length, and avoids the downward bias in the tail that
+    arises when raw (un-normalized) dot products are summed across series
+    of different lengths.
+
+    Uses FFT-based autocovariance for speed (O(N log N) per series
+    instead of O(N * nlags)).
+
+    Returns R[0..nlags] normalized so that R[0] = 1.
     """
     sum_autocov = np.zeros(nlags + 1)
+
     for s in series_list:
         s = np.asarray(s, dtype=float)
-        s = s - s.mean()
+        s = s - s.mean()          # per-series demeaning (correct for daily sign series)
         n = len(s)
-        for k in range(nlags + 1):
-            if k < n:
-                sum_autocov[k] += np.dot(s[k:], s[:n - k])
+
+        # FFT-based circular autocovariance, normalized by N (biased estimator).
+        # Padding to 2*n avoids circular wrap-around artifacts.
+        f    = np.fft.rfft(s, n=2 * n)
+        acov = np.fft.irfft(f * np.conj(f))[:nlags + 1].real / n
+
+        sum_autocov += acov
+
+    # Normalize so R[0] = 1
     return sum_autocov / sum_autocov[0]
 
 
@@ -55,17 +69,29 @@ def pooled_acf(series_list, nlags):
 def pooled_dfa(series_list, n_vals=None):
     """
     Performs Pooled Detrended Fluctuation Analysis on a list of time series.
-    Assumes all series share the same scaling exponent.
+    Assumes all series share the same scaling exponent alpha.
+
+    The fluctuation function F(n) is computed by pooling squared residuals
+    across all series and all segments before taking the square root,
+    which gives a single robust estimate per window size.
+
+    Returns:
+        alpha       -- DFA scaling exponent (slope in log-log space)
+        n_vals      -- window sizes used (after masking invalid points)
+        F_n         -- corresponding fluctuation values
     """
     min_len = min(len(s) for s in series_list)
     if n_vals is None:
-        n_vals = np.unique(np.logspace(np.log10(16), np.log10(min_len // 4), num=20, dtype=int))
+        n_vals = np.unique(
+            np.logspace(np.log10(16), np.log10(min_len // 4), num=20).astype(int)
+        )
 
     F_n = []
 
     for n in n_vals:
         total_squared_fluct = 0.0
-        total_segments = 0
+        total_segments      = 0
+        t = np.arange(n)   # reuse across segments
 
         for x in series_list:
             N = len(x)
@@ -75,54 +101,58 @@ def pooled_dfa(series_list, n_vals=None):
             if num_segments == 0:
                 continue
 
-            # Forward segments
+            # Forward pass
             for m in range(num_segments):
                 start = m * n
-                end = start + n
-                t = np.arange(n)
-                poly = np.polyfit(t, Y[start:end], 1)
-                trend = np.polyval(poly, t)
-                total_squared_fluct += np.sum((Y[start:end] - trend) ** 2)
-                total_segments += 1
+                seg   = Y[start:start + n]
+                poly  = np.polyfit(t, seg, 1)
+                total_squared_fluct += np.sum((seg - np.polyval(poly, t)) ** 2)
+                total_segments      += 1
 
-            # Backward segments to use leftover data
+            # Backward pass (uses the tail of the series)
             for m in range(num_segments):
                 start = N - (m + 1) * n
-                end = start + n
-                t = np.arange(n)
-                poly = np.polyfit(t, Y[start:end], 1)
-                trend = np.polyval(poly, t)
-                total_squared_fluct += np.sum((Y[start:end] - trend) ** 2)
-                total_segments += 1
+                seg   = Y[start:start + n]
+                poly  = np.polyfit(t, seg, 1)
+                total_squared_fluct += np.sum((seg - np.polyval(poly, t)) ** 2)
+                total_segments      += 1
 
         if total_segments > 0:
             F_n.append(np.sqrt(total_squared_fluct / (total_segments * n)))
         else:
             F_n.append(np.nan)
 
-    n_vals, F_n = np.array(n_vals), np.array(F_n)
-    mask = (F_n > 0) & ~np.isnan(F_n)
+    n_vals = np.array(n_vals)
+    F_n    = np.array(F_n)
+    mask   = (F_n > 0) & ~np.isnan(F_n)
 
-    slope, intercept, r_value, p_value, std_err = linregress(np.log10(n_vals[mask]), np.log10(F_n[mask]))
+    slope, intercept, r_value, _, std_err = linregress(
+        np.log10(n_vals[mask]), np.log10(F_n[mask])
+    )
+    alpha     = slope
+    r_squared = r_value ** 2
 
-    alpha = slope
-    r_squared = r_value**2
+    print("--- DFA Verification Report ---")
+    print(f"  R-squared (fit quality) : {r_squared:.4f}")
+    print(f"  Std error of alpha      : {std_err:.4f}")
 
-    print(f"--- DFA Verification Report ---")
-    print(f"R-squared (Linear Fit Quality): {r_squared:.4f}")
-    print(f"Standard Error of Alpha: {std_err:.4f}")
-
+    # ── DFA diagnostic plot ──────────────────────────────────────────────────
     plt.figure()
-    plt.loglog(n_vals, F_n, 'bo-', label='Pooled Fluctuation F(n)')
-    plt.loglog(n_vals, 10**intercept * (n_vals**alpha), 'r--',
-               label=f'Fit (alpha={alpha:.2f}, R²={r_squared:.3f})')
+    plt.loglog(n_vals, F_n, 'bo-', label='Pooled F(n)')
+    plt.loglog(
+        n_vals[mask],
+        10 ** intercept * n_vals[mask] ** alpha,
+        'r--',
+        label=f'Fit  α={alpha:.3f}  R²={r_squared:.3f}'
+    )
     plt.xlabel('Window size (n)')
     plt.ylabel('Fluctuation F(n)')
+    plt.title('Pooled DFA')
     plt.legend()
     plt.grid(True, which="both", ls="--")
     plt.tight_layout()
     os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
-    plt.savefig(os.path.join('images', 'acf', 'dfa_check.png'))
+    plt.savefig(os.path.join('images', 'acf', 'dfa_check.png'), dpi=150)
     plt.close()
 
     return alpha, n_vals[mask], F_n[mask]
@@ -132,44 +162,102 @@ def pooled_dfa(series_list, n_vals=None):
 # PLOT ACF
 # ══════════════════════════════════════════════════════════════════════════════
 
-def plot_acf(pooled, all_daily_corrs, gamma):
-    data_matrix = np.array(all_daily_corrs)
-    std_err     = sem(data_matrix, axis=0)
+def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
+    """
+    Two-panel figure:
+      Left  – first 5 daily ACFs (log-log, lags 1..50)
+      Right – pooled ACF with:
+                * direct power-law fit to the tail (lag >= 20)
+                * theoretical prediction from DFA exponent
+
+    Parameters
+    ----------
+    pooled          : ndarray, shape (max_lag+1,)  R[0..max_lag]
+    all_daily_corrs : list of ndarrays, each shape (max_lag+1,)
+    gamma_dfa       : float   ACF tail exponent predicted by DFA  (2 - 2*alpha)
+    max_lag         : int
+    """
+    data_matrix = np.array(all_daily_corrs)          # (n_days, max_lag+1)
+    err_vals    = sem(data_matrix, axis=0)[1:]        # SEM over days, lags 1..max_lag
 
     lags        = np.arange(1, max_lag + 1)
-    pooled_vals = pooled[1:]
-    err_vals    = std_err[1:]
+    pooled_vals = pooled[1:]                          # drop lag-0
 
-    tail_mask = lags >= 10
+    # ── tail fit (log-log linear regression for lags >= 20) ─────────────────
+    tail_mask = lags >= 20
 
-    log_lags = np.log(lags[tail_mask])
-    log_y    = np.log(pooled_vals[tail_mask])
+    # Guard: drop non-positive pooled values before log transform
+    valid = tail_mask & (pooled_vals > 0)
+    log_lags = np.log10(lags[valid])
+    log_y    = np.log10(pooled_vals[valid])
 
-    log_A_fit = np.mean(log_y + gamma * log_lags)
-    A_fit     = np.exp(log_A_fit)
+    slope, intercept, r_value, _, std_err_fit = linregress(log_lags, log_y)
 
-    fig1, axes1 = plt.subplots(1, 2, figsize=(18, 6))
+    gamma_empirico = -slope          # ACF tail exponent from direct fit
+    A_fit          = 10 ** intercept
 
-    ax = axes1[0]
+    # Anchor the DFA prediction at the first valid tail point (avoids free offset)
+    A_dfa = 10 ** (log_y[0] + gamma_dfa * log_lags[0])
+
+    print("\n--- ACF Tail Fitting Report ---")
+    print(f"  Delta from ACF direct fit : {gamma_empirico:.4f}")
+    print(f"  Delta predicted by DFA    : {gamma_dfa:.4f}")
+    print(f"  R² of tail fit            : {r_value**2:.4f}")
+    print(f"  Std error of slope        : {std_err_fit:.4f}")
+
+    # ── figure ───────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+
+    # Panel 1 – individual daily ACFs (first 5 days)
+    ax = axes[0]
     for i, dc in enumerate(all_daily_corrs[:5]):
         ax.plot(lags, dc[1:], lw=1.0, label=f'Day {i+1}')
-    ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
-    ax.set_title('Daily ACF'); ax.set_xlim([1, 50]); ax.legend(fontsize=9)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlim([1, 50])
+    ax.set_xlabel(r'Lag $\tau$')
+    ax.set_ylabel('ACF')
+    ax.set_title('Daily ACF')
+    ax.legend(fontsize=9)
+    ax.grid(True, which="both", ls="--", alpha=0.5)
 
-    ax = axes1[1]
-    ax.fill_between(lags, pooled_vals - err_vals, pooled_vals + err_vals,
-                    color='steelblue', alpha=0.30, label='SEM')
-    ax.plot(lags, pooled_vals, color='steelblue', lw=1.0, label='Pooled ACF')
-    ax.plot(lags, power_law(lags, A_fit, -gamma), color='tomato', lw=2,
-            linestyle='--', label=f'Fit (δ={gamma:.3f})')
-    ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_xlabel('Lag'); ax.set_ylabel('ACF')
-    ax.set_title('Pooled ACF'); ax.legend(fontsize=9)
+    # Panel 2 – pooled ACF + fits
+    ax = axes[1]
+    ax.fill_between(
+        lags,
+        pooled_vals - err_vals,
+        pooled_vals + err_vals,
+        color='steelblue', alpha=0.30, label='±SEM'
+    )
+    ax.plot(lags, pooled_vals, color='steelblue', lw=1.5, label='Pooled ACF')
 
-    fig1.tight_layout()
+    # Direct ACF tail fit
+    ax.plot(
+        lags[valid],
+        power_law(lags[valid], A_fit, slope),
+        color='tomato', lw=2.5, ls='--',
+        label=rf'ACF tail fit  $\delta_{{ACF}}$={gamma_empirico:.3f}'
+    )
+
+    # DFA-predicted power law
+    ax.plot(
+        lags[valid],
+        power_law(lags[valid], A_dfa, -gamma_dfa),
+        color='purple', lw=2, ls=':',
+        label=rf'DFA prediction  $\delta_{{DFA}}$={gamma_dfa:.3f}'
+    )
+
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel(r'Lag $\tau$')
+    ax.set_ylabel('ACF')
+    ax.set_title('Pooled ACF with Tail Fit')
+    ax.legend(fontsize=9)
+    ax.grid(True, which="both", ls="--", alpha=0.5)
+
+    fig.tight_layout()
     os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
-    fig1.savefig(os.path.join('images', 'acf', 'acf_original.png'), dpi=300, bbox_inches='tight')
+    fig.savefig(os.path.join('images', 'acf', 'acf.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -178,7 +266,7 @@ def plot_acf(pooled, all_daily_corrs, gamma):
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    data_dir = 'database\\data'
+    data_dir = os.path.join('database', 'data')
     paths    = listdir(data_dir)
     max_lag  = 1_000
 
@@ -186,34 +274,38 @@ if __name__ == '__main__':
     all_daily_corrs = []
 
     for path in paths:
-        trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
+        trades = pd.read_csv(os.path.join(data_dir, path), header=None)
         signs  = trades[3].values.astype(float)
         all_signs.append(signs)
         all_daily_corrs.append(acf(signs, nlags=max_lag, fft=True))
 
-    # Compute or load pooled binary ACF
-    file_path = Path("database/acf_binary.npy")
-    if file_path.is_file():
-        pooled = np.load("database/acf_binary.npy")
+    # ── Pooled ACF (compute once, then cache) ────────────────────────────────
+    cache_path = Path("database/acf_binary.npy")
+    if cache_path.is_file():
+        pooled = np.load(cache_path)
+        print("Loaded cached pooled ACF.")
     else:
+        print("Computing pooled ACF …")
         pooled = pooled_acf(all_signs, nlags=max_lag)
-        np.save('database/acf_binary.npy', pooled)
+        np.save(cache_path, pooled)
+        print("Saved pooled ACF to cache.")
 
-    # Run DFA
+    # ── DFA ──────────────────────────────────────────────────────────────────
     alpha, scales, fluctuations = pooled_dfa(all_signs)
-    print(f"Pooled DFA Exponent (Alpha): {alpha:.4f}")
-    print(f"Estimated ACF Tail Exponent (Gamma): {-2 + 2*alpha:.4f}")
+    gamma_dfa = 2 - 2 * alpha
+    print(f"\nPooled DFA exponent  α      : {alpha:.4f}")
+    print(f"Predicted ACF tail exponent : {gamma_dfa:.4f}")
 
-    # Plot ACF
-    plot_acf(pooled, all_daily_corrs, 2 - 2*alpha)
+    # ── Plot ─────────────────────────────────────────────────────────────────
+    plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag)
 
-    # Save empirical p_plus for use in part 2
+    # ── Save auxiliary outputs for downstream scripts ─────────────────────────
     all_signs_concat = np.concatenate(all_signs)
-    p_plus = float(np.mean(all_signs_concat > 0))
-    print(f"\nEmpirical p(+1) = {p_plus:.4f}")
-    np.save('database/p_plus.npy', np.array(p_plus))
 
-    # Save median series length for use in part 2
+    p_plus = float(np.mean(all_signs_concat > 0))
+    np.save('database/p_plus.npy', np.array(p_plus))
+    print(f"\nEmpirical p(+1) = {p_plus:.4f}")
+
     median_len = int(np.median([len(s) for s in all_signs]))
     np.save('database/median_len.npy', np.array(median_len))
 
