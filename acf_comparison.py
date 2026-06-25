@@ -45,8 +45,8 @@ LMF_ALPHA     = 1.5
 LMF_N_TRADERS = 100
 
 # λ-model parameters
-LMF_LAMBDA_ALPHA = 1.5
-LMF_LAMBDA       = 0.32     # must be < λ_c = (alpha-1)/alpha
+LMF_LAMBDA_ALPHA = 1.8
+LMF_LAMBDA       = 0.3     # must be < λ_c = (alpha-1)/alpha
 
 # Van Vleck reconstruction parameters (part 2)
 VV_N_REALIZATIONS = 50     # number of binary realisations to average over
@@ -54,7 +54,6 @@ VV_SEED           = 42
 
 # Plot styling
 SAVE_PATH = os.path.join('images', 'acf', 'acf_comparison.png')
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS

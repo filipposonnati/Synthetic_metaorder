@@ -36,11 +36,14 @@ def compute_run_length_distribution(sequence: List[int]) -> Dict[int, int]:
 def plot_run_length_distributions(
     distributions: Union[Dict[int, int], List[Dict[int, int]]], 
     labels: Union[str, List[str]] = None,
-    log_scale: bool = False,
+    log_scale: Union[bool, str] = 'both',
     density: bool = True
 ):
     """
-    Plots one or multiple run-length distributions as raw counts or density.
+    Plots one or multiple run-length distributions as raw counts or density
+    with an aligned log-ratio subplot underneath comparing all models to the first dataset.
+    
+    Supports log_scale=True (log-log), log_scale=False (semi-log y), or log_scale='both'.
     """
     if isinstance(distributions, dict):
         distributions = [distributions]
@@ -48,43 +51,82 @@ def plot_run_length_distributions(
     elif labels is None:
         labels = [f"Dataset {i+1}" for i in range(len(distributions))]
         
-    plt.figure(figsize=(10, 6))
-    
-    for dist, label in zip(distributions, labels):
+    # --- Pre-process distributions once to compute frequencies/densities ---
+    processed_data = []
+    for dist in distributions:
         sorted_lengths = sorted(dist.keys())
         frequencies = [dist[length] for length in sorted_lengths]
         
-        # --- Density Normalization Logic ---
         if density:
             total_runs = sum(frequencies)
-            # Avoid division by zero if an empty dict somehow slips through
             if total_runs > 0:
                 frequencies = [f / total_runs for f in frequencies]
-        # ------------------------------------
+                
+        processed_data.append((sorted_lengths, frequencies))
         
-        plt.plot(sorted_lengths, frequencies, marker='o', linestyle='-', alpha=0.7, label=label)
+    # Use the first dataset (e.g., "Real Data") as the reference
+    ref_lengths, ref_frequencies = processed_data[0]
+    ref_lookup = dict(zip(ref_lengths, ref_frequencies))
     
-    # Adjust y-axis label based on mode
-    y_label = "Probability Density" if density else "Frequency / Count"
-
-    plt.xlabel("Run Length", fontsize=12)
-    plt.ylabel(y_label, fontsize=12)
-
-    plt.yscale('log')
+    # Determine which scale configurations to iterate through
+    scales_to_plot = [False, True] if log_scale == 'both' else [log_scale]
     
-    if log_scale:
-        plt.xscale('log')
+    for current_log_scale in scales_to_plot:
+        # Create a 2-row layout: top for main distribution, bottom for log-ratios
+        fig, (ax_main, ax_res) = plt.subplots(
+            2, 1, 
+            figsize=(10, 8), 
+            sharex=True, 
+            gridspec_kw={'height_ratios': [3, 1]}
+        )
         
-    plt.grid(True, which="both", linestyle="--", alpha=0.5)
-    plt.legend(fontsize=10)
-    plt.tight_layout()
+        # Draw a horizontal baseline at 0 for reference (log10(1) = 0 means Model == Real)
+        ax_res.axhline(0, color='gray', linestyle='--', alpha=0.6)
+        
+        for i, (label, (sorted_lengths, frequencies)) in enumerate(zip(labels, processed_data)):
+            # Plot main distribution
+            ax_main.plot(sorted_lengths, frequencies, marker='o', linestyle='-', alpha=0.7, label=label)
+            
+            # Compute and plot log-ratio for all datasets compared to Real Data (index > 0)
+            if i > 0:
+                ratio_lengths = []
+                log_ratios = []
+                for length, freq in zip(sorted_lengths, frequencies):
+                    ref_freq = ref_lookup.get(length, 0.0)
+                    # Protect against division by zero and log of zero
+                    if ref_freq > 0 and freq > 0:  
+                        ratio_lengths.append(length)
+                        log_ratios.append(np.log10(freq / ref_freq))
+                
+                # Fetch the color of the line from the main axes to match perfectly
+                line_color = ax_main.lines[-1].get_color()
+                ax_res.plot(ratio_lengths, log_ratios, marker='o', linestyle='-', alpha=0.7, color=line_color)
+        
+        # Formatting Top Main Plot
+        y_label = "Probability Density" if density else "Frequency / Count"
+        ax_main.set_ylabel(y_label, fontsize=12)
+        ax_main.set_yscale('log')
+        ax_main.grid(True, which="both", linestyle="--", alpha=0.5)
+        ax_main.legend(fontsize=10)
+        
+        # Formatting Bottom Log-Ratio Plot
+        ax_res.set_xlabel("Run Length", fontsize=12)
+        ax_res.set_ylabel("Log Ratio\nlog10(Model / Real)", fontsize=10)
+        ax_res.grid(True, which="both", linestyle="--", alpha=0.5)
+        
+        # Adjust X scale globally (propagates automatically because sharex=True)
+        if current_log_scale:
+            ax_main.set_xscale('log')
+            
+        fig.tight_layout()
 
-    if log_scale:
-        plt.savefig('images\\run_length_distribution_loglog.png')
-    else:
-        plt.savefig('images\\run_length_distribution.png')
-    
-    plt.show()
+        # Save to cross-platform paths based on the current scale mode
+        if current_log_scale:
+            fig.savefig(os.path.join('images', 'run_length_distribution_loglog.png'))
+        else:
+            fig.savefig(os.path.join('images', 'run_length_distribution.png'))
+            
+        plt.close(fig)
 
 def read_data():
     data_dir = os.path.join('database', 'data')
@@ -124,25 +166,24 @@ if __name__ == "__main__":
     p_plus     = float(np.load('database/p_plus.npy'))
     median_len = int(np.load('database/median_len.npy'))
 
-    gaussian_signs, _ = generate_binary_sequence(
-        pooled, p_plus=p_plus, N=10_000_000, n_realizations=1, seed=42
-    )
-    gaussian_rld = compute_run_length_distribution(gaussian_signs[0])
+    #gaussian_signs, _ = generate_binary_sequence(pooled, p_plus=p_plus, N=10_000_000, n_realizations=1, seed=42)
+    #gaussian_rld = compute_run_length_distribution(gaussian_signs[0])
 
-    lmf_signs = simulate_lmf(1.5, 10, 10_000_000)
-    lmf_rld = compute_run_length_distribution(lmf_signs)
+    lmf_signs = simulate_lmf(1.5, 4, 10_000_000)
+    lmf_rld_4 = compute_run_length_distribution(lmf_signs)
 
-    lmf_signs_lambda, _ = simulate_lmf_lambda(1.5, 0.2, 10_000_000)
-    lmf_rld_lambda = compute_run_length_distribution(lmf_signs_lambda)
+    lmf_signs_lambda, _ = simulate_lmf_lambda(1.8, 0.2, 10_000_000)
+    lmf_rld_lambda_18_02 = compute_run_length_distribution(lmf_signs_lambda)
 
+    lmf_signs_lambda, _ = simulate_lmf_lambda(1.6, 0.3, 10_000_000)
+    lmf_rld_lambda_16_03 = compute_run_length_distribution(lmf_signs_lambda)
+
+    lmf_signs_lambda, _ = simulate_lmf_lambda(1.8, 0.3, 10_000_000)
+    lmf_rld_lambda_18_03 = compute_run_length_distribution(lmf_signs_lambda)
+
+    # Calling the method once handles plotting and saving both configurations with aligned ratio graphs
     plot_run_length_distributions(
-        distributions=[rld, gaussian_rld, lmf_rld, lmf_rld_lambda],
-        labels=["Real Data", "Gaussian", r"LMF $\alpha$ = 1.5 n = 10", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.5"],
-        log_scale=True
-    )
-
-    plot_run_length_distributions(
-        distributions=[rld, gaussian_rld, lmf_rld, lmf_rld_lambda],
-        labels=["Real Data", "Gaussian", r"LMF $\alpha$ = 1.5 n = 10", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.5"],
-        log_scale=False
+        distributions=[rld, lmf_rld_lambda_18_02, lmf_rld_lambda_16_03, lmf_rld_lambda_18_03],
+        labels=["Real Data", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.8", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.6", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.8"],
+        log_scale='both'
     )
