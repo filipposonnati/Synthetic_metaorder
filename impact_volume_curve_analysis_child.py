@@ -150,7 +150,7 @@ if __name__ == "__main__":
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    folder_prefix = f"meta_slim_{model}" if model else "meta_slim"
+    folder_prefix = f"meta_tail_{model}" if model else "meta_tail"
     path_caricamento = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
     img_prefix = f"impact_volume_curve_analysis_child/{model + '_' if model else ''}"
 

@@ -13,7 +13,7 @@ data_dir = 'database\\data'
 if model != "":
     data_dir = data_dir + "_" + model
 
-meta_dir = 'database\\meta_slim'
+meta_dir = 'database\\meta_tail'
 if model != "":
     meta_dir = meta_dir + "_" + model
 

@@ -175,5 +175,6 @@ plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True)
 
 plt.grid(True, which="both", ls="-", alpha=0.2)
 plt.tight_layout()
+plt.savefig('images\\impact_volume_complete.png')
 
 plt.show()
