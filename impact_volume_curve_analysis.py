@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from scipy.optimize import curve_fit
+import os
 
 # Global Plot Configuration
 plt.rcParams.update({
@@ -235,40 +236,61 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     plt.close()
     print(f"Comparison plot saved: images\\{image_name}.png")
 
+def load_model_data(model, file_name_con_estensione, min_child=2):
+    """Load and clean data for a given model ('' means real data)."""
+    folder_prefix = f"meta_{model}" if model else "meta"
+    path = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
+    data = pd.read_csv(path)
+    return data[data['NbChild'] >= min_child].copy()
+
 
 if __name__ == "__main__":
-    # ── Configuration ────────────────────────────────────────────────────────
+    # ── Configurazione File ──────────────────────────────────────────────────
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    # '' = real data (no model prefix); add any synthetic model names here
+    # Modelli da analizzare
     models = ['', 'ar_1000', 'var_1000', 'delta_0.2_1000', 'delta_0.5_1000', 'delta_0.8_1000', 'lmf_tim_sqrt', 'lmf_tim_lin']
 
-    # ── Comparison plot (all models overlaid) ────────────────────────────────
-    img_comparison = f"impact_volume_curve_analysis/{function_clean}_comparison"
-    print(f"\nGenerating comparison plot: {img_comparison}")
+    # Conserviamo il riferimento originale della funzione prima di applicare modifiche dinamiche
+    _orig_load_model_data = load_model_data
+
+    target_dir = "impact_volume_curve_analysis_ge3"
+    min_child = 3
+
+    print("\n" + "="*70)
+    print(f"AVVIO ANALISI: {target_dir.upper()} (NbChild >= {min_child})")
+    print("="*70)
+
+    # 1. Crea la cartella se non esiste
+    os.makedirs(os.path.join("images", target_dir), exist_ok=True)
+
+    # 2. Sovrascriviamo temporaneamente il comportamento di default della funzione di load
+    load_model_data = lambda m, f: _orig_load_model_data(m, f, min_child=min_child)
+
+    # 3. Generazione del grafico di confronto (Comparison Plot)
+    img_comparison = f"{target_dir}/{function_clean}_comparison"
+    print(f"\n[GENERAZIONE] Grafico di confronto complessivo: images/{img_comparison}.png")
     plot_aggregate_comparison(
         file_name_con_estensione,
         models=models,
         image_name=img_comparison,
-        vertical_shift=10.0,   # tune this if datasets still overlap
+        vertical_shift=10.0,
     )
 
-    # ── Per-model individual plots ────────────────────────────────────────────
+    # 4. Generazione dei singoli grafici per modello
     for model in models:
         label = model_display_name(model)
-        folder_prefix = f"meta_{model}" if model else "meta"
-        img_prefix = f"impact_volume_curve_analysis/{model + '_' if model else ''}"
-        nome_img_aggregato = f"{img_prefix}{function_clean}"
+        img_prefix = f"{model + '_' if model else ''}"
+        nome_img_aggregato = f"{target_dir}/{img_prefix}{function_clean}"
 
         try:
-            data = pd.read_csv(f"database\\{folder_prefix}\\meta_{file_name_con_estensione}")
-            df_clean = data[data['NbChild'] > 1].copy()
-
-            print(f"\n[{label}] Generating aggregate plot: {nome_img_aggregato}")
+            df_clean = load_model_data(model, file_name_con_estensione)
+            print(f" └─ [{label}] Generazione plot individuale: images/{nome_img_aggregato}.png")
             plot_aggregate_impact(df_clean, nome_img_aggregato)
-
-        except FileNotFoundError:
-            print(f"[{label}] ERROR: file not found at database\\{folder_prefix}\\meta_{file_name_con_estensione}")
         except Exception as e:
-            print(f"[{label}] ERROR: {e}")
+            print(f" └─ [{label}] ERRORE: {e}")
+
+    # Ripristina la funzione originale al termine dello script per sicurezza
+    load_model_data = _orig_load_model_data
+    print("\n[FINISH] Tutte le analisi sono state completate con successo.")

@@ -115,8 +115,10 @@ def plot_stratified_impact(df, image_name, n_bins=51):
 
         # Plotting
         ax2.hist(subset['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
+        
+        # MIGLIORAMENTO: Aggiunto il numero di figli (nb) alla legenda del binned data
         ax1.errorbar(grouped['x'], grouped['y'], xerr=grouped['x_err'], yerr=grouped['y_err'],
-                     marker='o', linestyle='', color=colors[nb], markersize=4, label='Binned data')
+                     marker='o', linestyle='', color=colors[nb], markersize=4, label=f'Binned data (NbChild={nb})')
 
         fit = robust_power_law_fit(grouped['x'], grouped['y'], grouped['x_err'], grouped['y_err'], grouped['count'])
         if fit:
@@ -164,7 +166,7 @@ if __name__ == "__main__":
         all_results = plot_stratified_impact(df_clean, nome_img_stratificato)
 
         res_df = pd.DataFrame.from_dict(all_results, orient='index').sort_index()
-        res_df = res_df[(res_df.index > 1) & (res_df.index <= 20)]
+        res_df = res_df[(res_df.index > 1) & (res_df.index <= 30)]
 
         x_data = res_df.index.values
 
@@ -172,7 +174,9 @@ if __name__ == "__main__":
         print(f"Generazione grafico 2 (fit parametri originario): {img_prefix}{function_clean}_nbchild_fit.png")
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-        ax1.errorbar(x_data, res_df['Y'], yerr=res_df['Ye'], fmt='.', color='blue', ecolor='lightblue', label='Y')
+        # MIGLIORAMENTO: Barre d'errore rese più intense con colori saturi, spessore maggiore e capsize
+        ax1.errorbar(x_data, res_df['Y'], yerr=res_df['Ye'], fmt='.', color='blue', 
+                     ecolor='blue', elinewidth=1.5, capsize=3, label='Y')
         ax1.set_xlabel('Number of Children')
         ax1.set_ylabel('Y')
         ax1.set_xticks(x_data)
@@ -181,7 +185,9 @@ if __name__ == "__main__":
         ax1.grid(True, linestyle='--', alpha=0.7)
         ax1.legend()
 
-        ax2.errorbar(x_data, res_df['delta'], yerr=res_df['de'], fmt='.', color='red', ecolor='lightsalmon', label=r'$\delta$')
+        # MIGLIORAMENTO: Barre d'errore rese più intense con colori saturi, spessore maggiore e capsize
+        ax2.errorbar(x_data, res_df['delta'], yerr=res_df['de'], fmt='.', color='tomato', 
+                     ecolor='tomato', elinewidth=1.5, capsize=3, label=r'$\delta$')
         ax2.set_xlabel('Number of Children')
         ax2.set_ylabel(r'$\delta$')
         ax2.set_xticks(x_data)
@@ -192,65 +198,6 @@ if __name__ == "__main__":
 
         plt.tight_layout()
         plt.savefig(f"images/{img_prefix}{function_clean}_nbchild_fit.png")
-        plt.close()
-
-        # --- Graph 3: Linear Fits + Residual Analysis ---
-        print(f"Generazione grafico 3 (analisi residui lineare): {img_prefix}{function_clean}_nbchild_linear_fit_analysis.png")
-        fig_lin, axes_lin = plt.subplots(2, 2, figsize=(14, 10), sharex='col')
-        ((ax_y, ax_d), (ax_y_res, ax_d_res)) = axes_lin
-
-        # 1. Fit Y Linearly
-        popt_y, _ = curve_fit(linear_func, x_data, res_df['Y'], sigma=res_df['Ye'], absolute_sigma=True)
-        y_fit = linear_func(x_data, *popt_y)
-        y_pull = (res_df['Y'] - y_fit) / res_df['Ye']  # Residuals normalized by their error bar (in units of sigma)
-
-        ax_y.errorbar(x_data, res_df['Y'], yerr=res_df['Ye'], fmt='.', color='blue', ecolor='lightblue', label='Data Y')
-        ax_y.plot(x_data, y_fit, 'k--', label=f'Fit: $m={popt_y[0]:.2e}, q={popt_y[1]:.2e}$')
-        ax_y.set_ylabel('Y')
-        ax_y.set_xticks(x_data)
-        ax_y.set_xlim(1.5, max(x_data) + 0.5)
-        ax_y.grid(True, linestyle='--', alpha=0.5)
-        ax_y.legend()
-        ax_y.set_title('Linear Fit on $Y$')
-
-        ax_y_res.scatter(x_data, y_pull, color='purple', s=20, zorder=3)
-        ax_y_res.axhline(0, color='black', linestyle='-', linewidth=1)
-        ax_y_res.axhline(1, color='grey', linestyle=':', linewidth=1)
-        ax_y_res.axhline(-1, color='grey', linestyle=':', linewidth=1)
-        ax_y_res.set_xlabel('Number of Children')
-        ax_y_res.set_ylabel('Residuals')
-        ax_y_res.set_xticks(x_data)
-        ax_y_res.set_xlim(1.5, max(x_data) + 0.5)
-        ax_y_res.tick_params(axis='x', rotation=45)
-        ax_y_res.grid(True, linestyle='--', alpha=0.5)
-
-        # 2. Fit Delta Linearly
-        popt_d, _ = curve_fit(linear_func, x_data, res_df['delta'], sigma=res_df['de'], absolute_sigma=True)
-        d_fit = linear_func(x_data, *popt_d)
-        d_pull = (res_df['delta'] - d_fit) / res_df['de']  # Residuals normalized by their error bar (in units of sigma)
-
-        ax_d.errorbar(x_data, res_df['delta'], yerr=res_df['de'], fmt='.', color='red', ecolor='lightsalmon', label=r'Data $\delta$')
-        ax_d.plot(x_data, d_fit, 'k--', label=f'Fit: $m={popt_d[0]:.4f}, q={popt_d[1]:.4f}$')
-        ax_d.set_ylabel(r'$\delta$')
-        ax_d.set_xticks(x_data)
-        ax_d.set_xlim(0.5, max(x_data) + 0.5)
-        ax_d.grid(True, linestyle='--', alpha=0.5)
-        ax_d.legend()
-        ax_d.set_title(r'Linear Fit on $\delta$')
-
-        ax_d_res.scatter(x_data, d_pull, color='brown', s=20, zorder=3)
-        ax_d_res.axhline(0, color='black', linestyle='-', linewidth=1)
-        ax_d_res.axhline(1, color='grey', linestyle=':', linewidth=1)
-        ax_d_res.axhline(-1, color='grey', linestyle=':', linewidth=1)
-        ax_d_res.set_xlabel('Number of Children')
-        ax_d_res.set_ylabel('Residual')
-        ax_d_res.set_xticks(x_data)
-        ax_d_res.set_xlim(0.5, max(x_data) + 0.5)
-        ax_d_res.tick_params(axis='x', rotation=45)
-        ax_d_res.grid(True, linestyle='--', alpha=0.5)
-
-        plt.tight_layout()
-        plt.savefig(f"images/{img_prefix}{function_clean}_nbchild_linear_fit_analysis.png")
         plt.close()
         
         print("Operazione completata con successo.")
