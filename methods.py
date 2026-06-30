@@ -52,7 +52,7 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
 
     trades['Volume'] = trades['quantity'] / trades['DailyVolume']
 
-    trades['TradedVolume'] = trades['Volume'].cumsum()
+    trades['TransactionTime'] = trades['Volume'].cumsum()
 
     trades.drop(columns=['price', 'quantity', 'DailySigma'], inplace=True)
 
@@ -74,11 +74,11 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
         1, 0
     ).cumsum() + start_id
 
-    start_cum_volume = sorted_trades.groupby('metaid')['TradedVolume'].transform('first')
+    start_cum_volume = sorted_trades.groupby('metaid')['TransactionTime'].transform('first')
     start_volume = sorted_trades.groupby('metaid')['Volume'].transform('first')
 
     # Volume traded by everyone until a certain point
-    sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] - start_cum_volume + start_volume
+    sorted_trades['TradedVolume'] = sorted_trades['TransactionTime'] - start_cum_volume + start_volume
 
     sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] / sorted_trades.groupby('metaid')['TradedVolume'].transform('last')
 
@@ -93,6 +93,8 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
     # Volume traded by the trader until a certain point
     sorted_trades['PartialVolume'] = sorted_trades.groupby('metaid')['Volume'].cumsum()
 
+    sorted_trades['EndTransactionTime'] = sorted_trades['TransactionTime']
+
     # CHANGE 1: 'trader':'first' instead of 'trader':'count' so the trader label is
     # preserved in metaorders_agg. NbChild is now computed separately below.
     metaorders_agg = sorted_trades.groupby('metaid').agg({
@@ -104,7 +106,9 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
         'EndTime':'last',
         'Volume':'sum',
         'TradedVolume':'last',
-        'DailyVolume': 'first'
+        'DailyVolume': 'first',
+        'TransactionTime': 'first',
+        'EndTransactionTime': 'last'
     }).reset_index()
 
     # CHANGE 2: NbChild for metaorders_agg is now computed via .size() and merged in,
@@ -132,14 +136,14 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir = 'database\
     sorted_trades['Ratio_pre'] = sorted_trades['PartialImpact_pre'] / np.sqrt(sorted_trades['MetaVolume'])
 
     # CHANGE 3: 'trader' removed from the drop list so it is kept in sorted_trades.
-    sorted_trades.drop(columns=['EndTime', 'day'], inplace=True)
+    sorted_trades.drop(columns=['EndTime', 'day', 'EndTransactionTime'], inplace=True)
 
     metaorders_agg['MetaImpact'] = (metaorders_agg['EndMid'] - metaorders_agg['BeginMid']) * metaorders_agg['sign']
 
     # CHANGE 4: 'trader':'NbChild' removed from rename because 'trader' now holds the
     # label and NbChild already exists as its own column.
     metaorders_agg = metaorders_agg.rename(columns={
-        'Volume':'MetaVolume', 'Impact': 'MetaImpact'
+        'Volume':'MetaVolume', 'Impact': 'MetaImpact', 'TransactionTime': 'BeginTransactionTime'
     })
 
     metaorders_agg['Ratio'] = metaorders_agg['MetaImpact'] / np.sqrt(metaorders_agg['MetaVolume'])
