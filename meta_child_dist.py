@@ -527,12 +527,12 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
     variant_names  = list(sim_datasets.keys())
     variant_colors = plt.cm.tab10.colors
     variant_style  = {
-        name: dict(linestyle='', marker='o', markersize=3.5,
+        name: dict(linestyle='', marker='o', markersize=2.5,
                    color=variant_colors[i % len(variant_colors)], alpha=0.85,
                    label=name)
         for i, name in enumerate(variant_names)
     }
-    real_style = dict(linestyle='', marker='o', markersize=3.5,
+    real_style = dict(linestyle='', marker='o', markersize=2.5,
                       color='black', alpha=0.9, label=real_subdir)
 
     # ── Build figure ─────────────────────────────────────────────────────────
@@ -626,9 +626,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    plot_all('meta_child_dist_lmf_lambda_1.5_0.3', lmf_init_conf=['lmf_lambda', 1.5, 0.3])
-
-    exit()
+    #plot_all('meta_child_dist_lmf_lambda_1.5_0.3', lmf_init_conf=['lmf_lambda', 1.5, 0.3])
 
     compare_all_distributions_grid(BASE_DIR, REAL_SUBDIR)
 

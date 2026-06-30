@@ -42,7 +42,8 @@ def load_trades(function: str, model: str) -> pd.DataFrame:
     trades_total = None
     for path in listdir(dir_path):
         trades = pd.read_csv(f'{dir_path}\\{path}', sep=',')
-        daily = trades[['PartialVolume', 'NbChild', 'PartialImpact', 'MetaVolume']].copy()
+        # Kept the original columns and loaded TradedVolume explicitly
+        daily = trades[['PartialVolume', 'NbChild', 'PartialImpact', 'MetaVolume', 'TradedVolume']].copy()
         trades_total = pd.concat([trades_total, daily])
 
     trades_total = trades_total[trades_total['NbChild'] > 1]
@@ -53,24 +54,7 @@ def load_trades(function: str, model: str) -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def fit_iterative(func, x, y, y_err, x_err=None, n_iter=10, x_err_gradient=None):
-    """
-    Run an iterative curve_fit that propagates x-errors into an effective sigma.
-
-    Parameters
-    ----------
-    func             : callable  – model function
-    x, y             : arrays    – data
-    y_err            : array     – uncertainty on y
-    x_err            : array     – uncertainty on x (optional)
-    n_iter           : int       – number of refinement iterations
-    x_err_gradient   : callable  – function(popt, x) → |∂f/∂x| for error propagation
-                                   Required when x_err is provided.
-
-    Returns
-    -------
-    popt, pcov, popt_err
-    """
-    # Initial fit ignoring x errors
+    """Run an iterative curve_fit that propagates x-errors into an effective sigma."""
     popt, pcov = curve_fit(func, x, y, sigma=y_err, absolute_sigma=True)
 
     if x_err is None or x_err_gradient is None:
@@ -95,14 +79,8 @@ def report_fit(label: str, popt, popt_err, param_names):
 def bin_log(series: pd.Series, n_bins: int = 51):
     return np.logspace(np.log10(series.min()), np.log10(series.max()), n_bins)
 
-def bin_linear_cubic(n_bins: int = 21):
-    return np.linspace(0, 1, n_bins)**3
-
 def bin_linear_quadratic(n_bins: int = 21):
     return np.linspace(0, 1, n_bins)**2
-
-def bin_linear(n_bins: int = 26):
-    return np.linspace(0, 1, n_bins)
 
 def group_by_bins(df, col_x, col_y, bins):
     """Bin col_x and return grouped statistics for (col_x, col_y)."""
@@ -123,35 +101,31 @@ def group_by_bins(df, col_x, col_y, bins):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def analyse_cumulative(trades: pd.DataFrame, function: str, model: str):
-    """Fit I_i ~ Y * (Σq_i)^delta and save the cumulative impact plot."""
-    print('\n── Cumulative fit ──')
+    """Fit I_i ~ Y * (TradedVolume)^delta and save the cumulative impact plot."""
+    print('\n── Cumulative fit (X = TradedVolume) ──')
 
-    bins = bin_log(trades['PartialVolume'])
-    grouped = group_by_bins(trades, 'PartialVolume', 'PartialImpact', bins)
+    # X-axis switched to TradedVolume
+    bins = bin_log(trades['TradedVolume'])
+    grouped = group_by_bins(trades, 'TradedVolume', 'PartialImpact', bins)
 
     x      = grouped['x_mean'].to_numpy()
     y      = grouped['y_mean'].to_numpy()
     x_err  = grouped['x_err'].to_numpy()
     y_err  = grouped['y_err'].to_numpy()
 
-    # Restrict fit to well-populated bins
     core_mask = grouped['count'] > 0.5 * grouped['count'].max()
     x_c, y_c, x_err_c, y_err_c = x[core_mask], y[core_mask], x_err[core_mask], y_err[core_mask]
 
-    # No-error fit
     popt0, _, perr0 = fit_iterative(power_law, x_c, y_c, y_err_c)
     report_fit('no err', popt0, perr0, ['Y', 'delta'])
 
-    # y-error only
     popt1, _, perr1 = fit_iterative(power_law, x_c, y_c, y_err_c)
     report_fit('y err', popt1, perr1, ['Y', 'delta'])
 
-    # Effective (x+y) error – propagate ∂(power_law)/∂x = Y·δ·x^(δ−1)
     def grad(popt, x):
         return popt[0] * popt[1] * x**(popt[1] - 1)
 
-    popt, _, perr = fit_iterative(power_law, x_c, y_c, y_err_c, x_err_c,
-                                  x_err_gradient=grad)
+    popt, _, perr = fit_iterative(power_law, x_c, y_c, y_err_c, x_err_c, x_err_gradient=grad)
     report_fit('eff err', popt, perr, ['Y', 'delta'])
 
     Y, delta, Y_err, delta_err = popt[0], popt[1], perr[0], perr[1]
@@ -161,17 +135,17 @@ def analyse_cumulative(trades: pd.DataFrame, function: str, model: str):
     ax1.errorbar(x, y, xerr=x_err, yerr=y_err,
                  linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
-    x_th = np.logspace(np.log10(1e-7), np.log10(2e-3), 100)
+    x_th = np.logspace(np.log10(x.min() if x.min() > 0 else 1e-5), np.log10(x.max()), 100)
     ax1.plot(x_th, Y * x_th**delta,
              label=r'$y = Yx^{\delta}$', linestyle=':', color='black', zorder=2)
 
     ax1.set_xscale('log')
     ax1.set_yscale('log')
-    ax1.set_xlabel(r'$\Sigma q_i$')
+    ax1.set_xlabel('TradedVolume')
     ax1.set_ylabel(r'$I_i$')
 
     ax2 = ax1.twinx()
-    ax2.hist(trades['PartialVolume'], bins=bins, alpha=0.2, color='gray', zorder=1)
+    ax2.hist(trades['TradedVolume'], bins=bins, alpha=0.2, color='gray', zorder=1)
     ax2.set_ylabel('Frequency')
 
     lines, labels   = ax1.get_legend_handles_labels()
@@ -186,12 +160,12 @@ def analyse_cumulative(trades: pd.DataFrame, function: str, model: str):
 
 
 def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
-    """Fit I_i/√Q ~ Y·√(Σq_i/Q) and save the ratio plot."""
-    print('\n── Square-root fit ──')
+    """Fit I_i/√Q ~ Y·√TradedVolume and save the ratio plot."""
+    print('\n── Square-root fit (X = TradedVolume) ──')
 
     df = trades.copy()
-    df['Ratio']           = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
-    df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
+    df['Ratio']            = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
+    df['NormalizedVolume'] = df['TradedVolume']  # TradedVolume is used directly here
 
     bins    = bin_linear_quadratic()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
@@ -201,20 +175,16 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
     x_err = grouped['x_err'].to_numpy()
     y_err = grouped['y_err'].to_numpy()
 
-    # No-error fit
     popt0, _, perr0 = fit_iterative(square_root, x, y, y_err)
     report_fit('no err', popt0, perr0, ['Y'])
 
-    # y-error only
     popt1, _, perr1 = fit_iterative(square_root, x, y, y_err)
     report_fit('y err', popt1, perr1, ['Y'])
 
-    # Effective error – ∂(Y√x)/∂x = Y/(2√x)
     def grad(popt, x):
         return popt[0] * 0.5 * x**(-0.5)
 
-    popt, _, perr = fit_iterative(square_root, x, y, y_err, x_err,
-                                  x_err_gradient=grad)
+    popt, _, perr = fit_iterative(square_root, x, y, y_err, x_err, x_err_gradient=grad)
     report_fit('eff err', popt, perr, ['Y'])
 
     Y, Y_err = popt[0], perr[0]
@@ -228,7 +198,7 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
     ax.plot(x_th, Y * np.sqrt(x_th),
             label=r'$y = Y\sqrt{x}$', linestyle=':', color='black', zorder=2)
 
-    ax.set_xlabel(r'$\Sigma q_i / Q$')
+    ax.set_xlabel('TradedVolume')
     ax.set_ylabel(r'$I_i / \sqrt{Q}$')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
@@ -240,12 +210,12 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
 
 
 def analyse_flat(trades: pd.DataFrame, function: str, model: str):
-    """Fit I_i/√(Σq_i) ~ Y (constant) and save the flat plot."""
+    """Fit I_i/√(Σq_i) ~ Y (constant) plotted against TradedVolume."""
     print('\n── Flat fit ──')
 
     df = trades.copy()
-    df['Ratio']           = df['PartialImpact'] / np.sqrt(df['PartialVolume'])
-    df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
+    df['Ratio']            = df['PartialImpact'] / np.sqrt(df['PartialVolume'])
+    df['NormalizedVolume'] = df['TradedVolume']  # TradedVolume is used directly here
 
     bins    = bin_linear_quadratic()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
@@ -272,7 +242,7 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
     ax.plot(x_th, np.full(len(x_th), Y),
             label=r'$y = Y$', linestyle=':', color='black', zorder=2)
 
-    ax.set_xlabel(r'$\Sigma q_i / Q$')
+    ax.set_xlabel('TradedVolume')
     ax.set_ylabel(r'$I_i / \sqrt{\Sigma q_i}$')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
@@ -285,7 +255,7 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
 
 def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
                         child_range=range(2, 12)):
-    """Plot I_i/√Q vs Σq_i/Q for each NbChild value."""
+    """Plot I_i/√Q vs TradedVolume for each NbChild value."""
     print('\n── NbChild Analysis ──')
 
     colors     = plt.cm.tab10(np.linspace(0, 1, 10))
@@ -300,10 +270,10 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
             print(f'  Skipping NbChild={n_child}: insufficient data ({len(subset)} samples)')
             continue
 
-        subset['Ratio']           = subset['PartialImpact'] / np.sqrt(subset['MetaVolume'])
-        subset['NormalizedVolume'] = subset['PartialVolume']  / subset['MetaVolume']
+        subset['Ratio']            = subset['PartialImpact'] / np.sqrt(subset['MetaVolume'])
+        subset['NormalizedVolume'] = subset['TradedVolume']  # TradedVolume is used directly here
 
-        bins    = np.linspace(0, 1, 21)**2
+        bins    = bin_linear_quadratic()
         grouped = group_by_bins(subset, 'NormalizedVolume', 'Ratio', bins)
 
         ax.errorbar(
@@ -319,7 +289,7 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
             label=f'n={n_child}',
         )
 
-    ax.set_xlabel(r'$\Sigma q_i / Q$')
+    ax.set_xlabel('TradedVolume')
     ax.set_ylabel(r'$I_i / \sqrt{Q}$')
     ax.legend(title='n children', fontsize=8, title_fontsize=9,
               bbox_to_anchor=(1, 1), loc='upper left')
@@ -328,12 +298,10 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
     plt.tight_layout()
     _save(f'{function}_ratio_child', model, dpi=150, bbox_inches='tight')
 
+
 def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: str,
                                   min_child: int = 5):
-    """
-    Same as analyse_square_root but restricted to metaorders with NbChild >= min_child.
-    Fits I_i/√Q ~ Y·√(Σq_i/Q) and saves the filtered ratio plot.
-    """
+    """Square-root fit restricted to metaorders with NbChild >= min_child against TradedVolume."""
     print(f'\n── Square-root fit (NbChild ≥ {min_child}) ──')
 
     df = trades[trades['NbChild'] >= min_child].copy()
@@ -344,7 +312,7 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
         return None, None
 
     df['Ratio']            = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
-    df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
+    df['NormalizedVolume'] = df['TradedVolume']  # TradedVolume is used directly here
 
     bins    = bin_linear_quadratic()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
@@ -354,20 +322,16 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
     x_err = grouped['x_err'].to_numpy()
     y_err = grouped['y_err'].to_numpy()
 
-    # No-error fit
     popt0, _, perr0 = fit_iterative(square_root, x, y, y_err)
     report_fit('no err', popt0, perr0, ['Y'])
 
-    # y-error only
     popt1, _, perr1 = fit_iterative(square_root, x, y, y_err)
     report_fit('y err', popt1, perr1, ['Y'])
 
-    # Effective error – ∂(Y√x)/∂x = Y/(2√x)
     def grad(popt, x):
         return popt[0] * 0.5 * x**(-0.5)
 
-    popt, _, perr = fit_iterative(square_root, x, y, y_err, x_err,
-                                  x_err_gradient=grad)
+    popt, _, perr = fit_iterative(square_root, x, y, y_err, x_err, x_err_gradient=grad)
     report_fit('eff err', popt, perr, ['Y'])
 
     Y, Y_err = popt[0], perr[0]
@@ -381,7 +345,7 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
     ax.plot(x_th, Y * np.sqrt(x_th),
             label=r'$y = Y\sqrt{x}$', linestyle=':', color='black', zorder=2)
 
-    ax.set_xlabel(r'$\Sigma q_i / Q$')
+    ax.set_xlabel('TradedVolume')
     ax.set_ylabel(r'$I_i / \sqrt{Q}$')
     ax.set_title(rf'NbChild $\geq$ {min_child}')
     ax.legend()
@@ -399,13 +363,15 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
 
 def _save(name: str, model: str, **kwargs):
     prefix = f'{model}_' if model else ''
-    path   = f'images\\impact_intra_order\\{prefix}{name}.png'
+    # New directory path destination applied here:
+    path   = f'images\\impact_transaction_time_volume\\{prefix}{name}.png'
     plt.savefig(path, **kwargs)
     plt.close()
     print(f'  Saved → {path}')
 
+
 if __name__ == '__main__':
-    function = '20_power_2.0'
+    function = '4_power_2.0'
     model    = ''
     print(f'{function}  {model}')
 
@@ -416,12 +382,8 @@ if __name__ == '__main__':
     #Y_flat, Y_flat_err                         = analyse_flat(trades, function, model)
 
     analyse_by_nb_child(trades, function, model)
-
     Y_sqrt5, Y_sqrt5_err = analyse_square_root_min_child(trades, function, model, min_child=5)
 
-    # ── Summary (ready for a LaTeX table) ──
     print('\n── Parameter summary ──')
-    #print(f'  Cumulative       : Y = {Y_cum:.6g} ± {Y_cum_err:.6g},  δ = {delta_cum:.6g} ± {delta_cum_err:.6g}')
     print(f'  Square-root      : Y = {Y_sqrt:.6g} ± {Y_sqrt_err:.6g}')
     print(f'  Square-root ≥5ch : Y = {Y_sqrt5:.6g} ± {Y_sqrt5_err:.6g}')
-    #print(f'  Flat             : Y = {Y_flat:.6g} ± {Y_flat_err:.6g}')

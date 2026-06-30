@@ -149,10 +149,10 @@ def generate(delta_map: dict[str, int],
 if __name__ == '__main__':
     # ── Signs settings ───────────────────────────────────────────────────────
     iterations     = 10      # TARGET number of iterations to reach
-    signs_origin   = 'lmf_lambda'  # 'lmf', 'gaussian', or '' (real signs from data)
+    signs_origin   = 'lmf'  # 'lmf', 'gaussian', or '' (real signs from data)
     
-    lmf_alpha      = 1.5
-    lmf_nb_traders = 50
+    lmf_alpha      = 1.8
+    lmf_nb_traders = 10
     lmf_lambda     = 0.3
 
     # ── Load configurations from CSV ─────────────────────────────────────────
