@@ -5,6 +5,7 @@ import powerlaw
 import os
 from pathlib import Path
 from scipy.stats import ks_2samp
+from lmf import simulate_lmf, simulate_lmf_lambda
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -216,15 +217,34 @@ def dist_fit(data: np.ndarray, iterations: int, filename: str) -> None:
 # ---------------------------------------------------------------------------
 # Plot all configurations together (single directory)
 # ---------------------------------------------------------------------------
-
-def plot_all(results_dir: str) -> None:
+def plot_all(name, lmf_init_conf = [], comparison = False) -> None:
     """
     Load every .npz in results_dir and overlay their empirical PDFs and CCDFs
-    on a single figure for visual comparison.
+    on a single figure for visual comparison. Includes LMF simulation if configured.
     """
-    all_data = load_all(results_dir)
+    all_data = load_all('database\\' + name)
     colors   = plt.cm.tab10.colors
     markers  = ['o', 's', '^', 'D', 'v', 'P', 'X', '*']
+
+    dist = None
+    lmf_label = ""
+
+    # 1. Generazione dei dati LMF se la configurazione non è vuota
+    if lmf_init_conf != [] and comparison == True:
+        if lmf_init_conf[0] == 'lmf':
+            alpha = lmf_init_conf[1]
+            n = lmf_init_conf[2]
+            num_metaordini = 10_000_000 
+            dist = (np.random.pareto(alpha, size=num_metaordini) + 1).astype(int)
+            lmf_label = f"LMF (α={alpha}, N={n})"
+            
+        elif lmf_init_conf[0] == 'lmf_lambda':
+            alpha = lmf_init_conf[1]
+            lam = lmf_init_conf[2]
+            # Usando la versione lambda con tracciamento, estraiamo le lunghezze iniziali dei creati
+            _, _, storico = simulate_lmf_lambda(alpha, lam, total_steps=10_000_000)
+            dist = np.array([m['lunghezza_iniziale'] for m in storico])
+            lmf_label = f"LMF λ (α={alpha}, λ={lam})"
 
     fig, (ax_pdf, ax_ccdf) = plt.subplots(1, 2, figsize=(12, 6))
 
@@ -239,6 +259,7 @@ def plot_all(results_dir: str) -> None:
     ax_pdf.set_ylabel('P(x)')
     ax_ccdf.set_ylabel('P(X ≥ x)')
 
+    # 2. Plot dei dati caricati da directory (.npz)
     for i, (stem, (iterations, data)) in enumerate(all_data.items()):
         color  = colors[i % len(colors)]
         marker = markers[i % len(markers)]
@@ -252,11 +273,27 @@ def plot_all(results_dir: str) -> None:
         ax_pdf.plot(x_values, counts, **kw)
         ax_ccdf.plot(x_ccdf, ccdf, **kw)
 
+    # 3. Calcolo e Plot dei dati LMF (se presenti)
+    if dist is not None and len(dist) > 0:
+        # Calcolo PDF per LMF
+        bins_lmf = np.arange(1, max(dist) + 2)
+        counts_lmf, bin_edges_lmf = np.histogram(dist, bins=bins_lmf, density=True)
+        x_values_lmf = bin_edges_lmf[:-1]
+        
+        # Calcolo CCDF per LMF
+        x_ccdf_lmf, ccdf_lmf = compute_ccdf(dist)
+        
+        # Usiamo una linea nera tratteggiata per distinguerla nettamente dai dati empirici
+        kw_lmf = dict(linestyle='--', linewidth=1.5, color='black', label=lmf_label)
+        
+        ax_pdf.plot(x_values_lmf, counts_lmf, **kw_lmf)
+        ax_ccdf.plot(x_ccdf_lmf, ccdf_lmf, **kw_lmf)
+
     ax_pdf.legend(framealpha=0.4)
     ax_ccdf.legend(framealpha=0.4)
     plt.tight_layout()
-    os.makedirs('images', exist_ok=True)
-    fig.savefig('images\\meta_child_dist\\dist_meta_child_all.png', dpi=300)
+    os.makedirs('images/meta_child_dist', exist_ok=True) # Corretto per compatibilità path cross-platform
+    fig.savefig(f'images/meta_child_dist/{name}.png', dpi=300)
     plt.close()
 
 # ---------------------------------------------------------------------------
@@ -589,7 +626,9 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    #plot_all(results_dir)
+    plot_all('meta_child_dist_lmf_lambda_1.5_0.3', lmf_init_conf=['lmf_lambda', 1.5, 0.3])
+
+    exit()
 
     compare_all_distributions_grid(BASE_DIR, REAL_SUBDIR)
 

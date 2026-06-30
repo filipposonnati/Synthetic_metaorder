@@ -166,24 +166,24 @@ if __name__ == "__main__":
     p_plus     = float(np.load('database/p_plus.npy'))
     median_len = int(np.load('database/median_len.npy'))
 
-    #gaussian_signs, _ = generate_binary_sequence(pooled, p_plus=p_plus, N=10_000_000, n_realizations=1, seed=42)
-    #gaussian_rld = compute_run_length_distribution(gaussian_signs[0])
+    gaussian_signs, _ = generate_binary_sequence(pooled, p_plus=p_plus, N=10_000_000, n_realizations=1, seed=42)
+    gaussian_rld = compute_run_length_distribution(gaussian_signs[0])
 
-    lmf_signs = simulate_lmf(1.5, 4, 10_000_000)
-    lmf_rld_4 = compute_run_length_distribution(lmf_signs)
+    #lmf_signs = simulate_lmf(1.5, 4, 10_000_000)
+    #lmf_rld_4 = compute_run_length_distribution(lmf_signs)
 
-    lmf_signs_lambda, _ = simulate_lmf_lambda(1.8, 0.2, 10_000_000)
+    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.8, 0.2, 10_000_000)
     lmf_rld_lambda_18_02 = compute_run_length_distribution(lmf_signs_lambda)
 
-    lmf_signs_lambda, _ = simulate_lmf_lambda(1.6, 0.3, 10_000_000)
+    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.6, 0.3, 10_000_000)
     lmf_rld_lambda_16_03 = compute_run_length_distribution(lmf_signs_lambda)
 
-    lmf_signs_lambda, _ = simulate_lmf_lambda(1.8, 0.3, 10_000_000)
+    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.8, 0.3, 10_000_000)
     lmf_rld_lambda_18_03 = compute_run_length_distribution(lmf_signs_lambda)
 
     # Calling the method once handles plotting and saving both configurations with aligned ratio graphs
     plot_run_length_distributions(
-        distributions=[rld, lmf_rld_lambda_18_02, lmf_rld_lambda_16_03, lmf_rld_lambda_18_03],
-        labels=["Real Data", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.8", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.6", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.8"],
+        distributions=[rld, gaussian_rld, lmf_rld_lambda_18_02, lmf_rld_lambda_16_03, lmf_rld_lambda_18_03],
+        labels=["Real Data", "Gaussian", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.8", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.6", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.8"],
         log_scale='both'
     )

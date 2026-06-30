@@ -3,8 +3,8 @@ import pandas as pd
 import os
 from os import listdir
 import methods
-from lmf import simulate_lmf
-from corr import generate_gaussian_signs
+from lmf import simulate_lmf, simulate_lmf_lambda
+from series_gaussian import generate_binary_sequence
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -75,29 +75,13 @@ def process_one_file(trades: pd.DataFrame, signs: np.ndarray,
     return sorted_trades.groupby('metaid')['trader'].count()
 
 
-def run_generate_all(delta_map: dict[str, int],
+def generate(delta_map: dict[str, int],
                      configurations: list[dict],
                      signs_origin: str,
                      lmf_alpha: float = None,
-                     lmf_nb_traders: int = None) -> dict[str, np.ndarray]:
-    """
-    Run iterations over all trade files, generating signs ONCE per
-    (iteration, file) and reusing them across every configuration.
-    Each config is accumulated only for its own required delta, so configs
-    that needed fewer iterations are not over-run.
-
-    Parameters
-    ----------
-    delta_map      : maps each stem -> number of NEW iterations it still needs
-    configurations : list of dicts with keys 'nb_traders', 'kind', 'exponent'
-    signs_origin   : 'lmf', 'gaussian', or '' (use real signs from the data file)
-    lmf_alpha      : alpha parameter for LMF (required when signs_origin='lmf')
-    lmf_nb_traders : nb_traders for LMF   (required when signs_origin='lmf')
-
-    Returns
-    -------
-    dict mapping each config stem -> 1-D numpy array of metaorder run-lengths
-    """
+                     lmf_nb_traders: int = None,
+                     lmf_lambda: float = None) -> dict[str, np.ndarray]:
+    
     data_dir = 'database/data'
     paths = np.array(listdir(data_dir))
     max_delta = max(delta_map.values())
@@ -123,8 +107,10 @@ def run_generate_all(delta_map: dict[str, int],
             # ── Resolve signs for this (iteration, file) pair ────────────────
             if signs_origin == 'lmf':
                 signs = simulate_lmf(lmf_alpha, lmf_nb_traders, len(trades))
+            elif signs_origin == 'lmf_lambda':
+                signs, _, _ = simulate_lmf_lambda(lmf_alpha, lmf_lambda, len(trades))
             elif signs_origin == 'gaussian':
-                signs = generate_gaussian_signs(
+                signs = generate_binary_sequence(
                     len(trades), p_plus=np.mean(np.array(trades[3])) + 0.5
                 )
             elif signs_origin == '':
@@ -162,11 +148,12 @@ def run_generate_all(delta_map: dict[str, int],
 
 if __name__ == '__main__':
     # ── Signs settings ───────────────────────────────────────────────────────
-    iterations     = 1      # TARGET number of iterations to reach
-    signs_origin   = 'lmf'  # 'lmf', 'gaussian', or '' (real signs from data)
+    iterations     = 10      # TARGET number of iterations to reach
+    signs_origin   = 'lmf_lambda'  # 'lmf', 'gaussian', or '' (real signs from data)
     
-    lmf_alpha      = 1.4
-    lmf_nb_traders = 10
+    lmf_alpha      = 1.5
+    lmf_nb_traders = 50
+    lmf_lambda     = 0.3
 
     # ── Load configurations from CSV ─────────────────────────────────────────
     cfg_df = pd.read_csv('configurations.csv')
@@ -180,6 +167,8 @@ if __name__ == '__main__':
     # ── Results directory ─────────────────────────────────────────────────────
     if signs_origin == 'lmf':
         results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_nb_traders}'
+    elif signs_origin == 'lmf_lambda':
+        results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_lambda}'
     elif signs_origin == 'gaussian':
         results_dir = f'database\\meta_child_dist_{signs_origin}'
     elif signs_origin == '':
@@ -225,12 +214,13 @@ if __name__ == '__main__':
           f"Each config will be run for exactly its own required delta.\n")
 
     # ── Run all configs together, signs generated once per (iter, file) ───────
-    new_data_map = run_generate_all(
+    new_data_map = generate(
         delta_map      = delta_map,
         configurations = configs_to_run,
         signs_origin   = signs_origin,
         lmf_alpha      = lmf_alpha,
-        lmf_nb_traders = lmf_nb_traders,
+        lmf_lambda = lmf_lambda,
+        lmf_nb_traders=lmf_nb_traders
     )
 
     # ── Save results for each config ──────────────────────────────────────────

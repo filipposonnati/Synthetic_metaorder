@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.tsa.stattools import acf
 from scipy.optimize import curve_fit
+import warnings
 
 def power_law(x, constant, alpha):
     return constant * x**alpha
@@ -36,122 +37,112 @@ def simulate_lmf(alpha, n_traders, total_steps):
 
 def simulate_lmf_lambda(alpha, lam, total_steps):
     """
-    λ-model simulation: N(t) fluctuates via a Poisson-like arrival process.
- 
-    This implements the λ model of Lillo, Mike & Farmer (2005), Section II.
-    Unlike the fixed-N model, the number of active hidden orders N(t) is not
-    kept constant. Instead, at every timestep a new hidden order arrives with
-    probability λ when N(t) > 0, or with probability 1 when N(t) = 0
-    (ensuring the pool never empties permanently).
- 
-    Dynamics per timestep
-    ---------------------
-    1. Arrival step  – add a new hidden order with probability λ (or 1 if
-       N(t) == 0).  Each new order gets a random sign ±1 and a length L drawn
-       from the discrete Pareto P(L) ∝ L^{-(α+1)}, i.e. np.random.pareto(α)+1.
-    2. Execution step – pick one of the N(t) active hidden orders uniformly at
-       random; remove one unit from it, record its sign as the revealed order.
-       If the order is now exhausted, remove it from the pool.
- 
-    The mean number of active orders E[N(t)] diverges as λ → λ_c from below,
-    where the critical value is
- 
-        λ_c = (α − 1) / α                                          [Eq. 18]
- 
-    For λ < λ_c the pool is stable and the ACF of revealed order signs decays
-    asymptotically as τ^{-(α-1)}, the same exponent as the fixed-N model.
- 
+    λ-model simulation di Lillo, Mike & Farmer (2005) con tracciamento dei metaordini.
+    
     Parameters
     ----------
     alpha : float
-        Pareto tail exponent of hidden-order lengths.  Must satisfy alpha > 1.
+        Esponente di coda della distribuzione di Pareto dei metaordini (> 1).
     lam : float
-        Arrival probability per timestep when N(t) > 0.
-        Must be in (0, 1); should be < λ_c = (alpha-1)/alpha for stability.
+        Probabilità di arrivo di un nuovo metaordine per timestep (0 < lam < 1).
     total_steps : int
-        Number of revealed orders (timesteps) to generate.
- 
+        Numero di step temporali della simulazione.
+        
     Returns
     -------
-    order_flow : np.ndarray, shape (total_steps,)
-        Time series of revealed order signs (+1 buy, -1 sell).
-    n_active : np.ndarray, shape (total_steps,)
-        Number of active hidden orders recorded *after* each timestep.
-        Useful for studying liquidity fluctuations (Section IV of the paper).
- 
-    Notes
-    -----
-    Critical threshold (Eq. 18):
-        λ_c = (α − 1) / α
- 
-    For α = 1.5  →  λ_c ≈ 0.333
-    For α = 1.3  →  λ_c ≈ 0.231
-    For α = 1.7  →  λ_c ≈ 0.412
- 
-    If λ ≥ λ_c the pool may grow without bound; a RuntimeWarning is raised
-    when N(t) exceeds 10 000 to alert the caller.
+    order_flow : np.ndarray
+        Serie temporale dei segni degli ordini eseguiti (+1 o -1).
+    n_active : np.ndarray
+        Numero di ordini attivi nel pool per ogni istante t.
+    storico_metaordini : list of dict
+        Registro di tutti i metaordini completati durante la simulazione.
+        Ogni dizionario contiene:
+          - 'id': identificativo univoco dell'ordine.
+          - 'lunghezza_iniziale': numero di esecuzioni necessarie alla nascita (L).
+          - 'step_creazione': l'istante t in cui l'ordine è entrato nel pool.
+          - 'step_completamento': l'istante t in cui l'ordine è stato esaurito.
+          - 'lifetime_effettivo': durata totale dell'ordine in passi di clock globali.
     """
     if alpha <= 1:
-        raise ValueError("alpha must be > 1 for the Pareto mean to be finite.")
+        raise ValueError("alpha deve essere > 1 affinché la media di Pareto sia finita.")
     if not (0 < lam < 1):
-        raise ValueError("lam must be in the open interval (0, 1).")
+        raise ValueError("lam deve essere compreso nell'intervallo aperto (0, 1).")
  
     lam_c = (alpha - 1) / alpha
     if lam >= lam_c:
-        import warnings
         warnings.warn(
-            f"lam={lam:.4f} >= lam_c={lam_c:.4f} (critical value for alpha={alpha}). "
-            "N(t) may grow without bound.", RuntimeWarning, stacklevel=2
+            f"lam={lam:.4f} >= lam_c={lam_c:.4f} (valore critico per alpha={alpha}). "
+            "N(t) potrebbe crescere indefinitamente.", RuntimeWarning, stacklevel=2
         )
  
+    # Generatore di ID univoci per i metaordini
+    id_counter = 0
+
     def new_hidden_order():
+        nonlocal id_counter
         length = int(np.random.pareto(alpha) + 1)
         side = np.random.choice([1, -1])
-        return [side, length]
+        # Struttura: [segno, tracking_lunghezza_residua, id_univoco, lunghezza_iniziale, step_nascita]
+        ordine = [side, length, id_counter, length, t_attore]
+        id_counter += 1
+        return ordine
  
-    # Pool of hidden orders: list of [sign, remaining_length]
-    # Start with a single hidden order to avoid an empty pool at t=0
+    # Inizializzazione delle strutture dati
+    # Per permettere la registrazione corretta dello step di nascita al tempo t=0
+    t_attore = 0 
     pool = [new_hidden_order()]
  
     order_flow = np.zeros(total_steps, dtype=np.int8)
     n_active   = np.zeros(total_steps, dtype=np.int32)
- 
+    
+    # Registro in cui salveremo i dati dei metaordini conclusi
+    storico_metaordini = []
     warned_large = False
  
     for t in range(total_steps):
+        t_attore = t  # Aggiorna il tempo corrente per la funzione di creazione
         n = len(pool)
  
-        # --- Arrival step ---
-        # With prob 1 if pool empty, else with prob lam
+        # --- 1. Arrival step ---
         if n == 0 or np.random.random() < (1.0 if n == 0 else lam):
             pool.append(new_hidden_order())
  
-        # --- Execution step ---
-        # Pick a random hidden order and execute one unit from it
+        # --- 2. Execution step ---
         n = len(pool)
         idx = np.random.randint(0, n)
-        side, remaining = pool[idx]
+        
+        # Estraiamo i dati dell'ordine selezionato
+        side, remaining, o_id, L_init, t_birth = pool[idx]
+        
         order_flow[t] = side
         remaining -= 1
+        
         if remaining <= 0:
-            # Order fully executed: swap with last for O(1) removal
+            # L'ordine è stato interamente eseguito. Registriamo le sue metriche.
+            storico_metaordini.append({
+                "id": o_id,
+                "lunghezza_iniziale": L_init,
+                "step_creazione": t_birth,
+                "step_completamento": t,
+                "lifetime_effettivo": t - t_birth + 1
+            })
+            # O(1) Rimozione dal pool (swap con l'ultimo elemento e pop)
             pool[idx] = pool[-1]
             pool.pop()
         else:
+            # Aggiorna solo la lunghezza rimanente dell'ordine nel pool
             pool[idx][1] = remaining
  
         n_active[t] = len(pool)
  
         if not warned_large and n_active[t] > 10_000:
-            import warnings
             warnings.warn(
-                f"N(t) exceeded 10 000 at step {t}. "
-                "Consider using lam < lam_c to keep the pool stable.",
+                f"N(t) ha superato 10 000 allo step {t}. Il sistema potrebbe essere instabile.",
                 RuntimeWarning, stacklevel=2
             )
             warned_large = True
  
-    return order_flow, n_active
+    return order_flow, n_active, storico_metaordini
 
 def plot(
     alphas,
