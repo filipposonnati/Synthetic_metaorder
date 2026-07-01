@@ -85,12 +85,12 @@ plt.rcParams.update({
 })
 
 dir    = 'post_trades'
-length = 3       # number of meta_duration windows after execution end
+length = 2       # number of meta_duration windows after execution end
 n_time_bins = 12 # fine time bins per window
 
 # ── ensure CSVs exist ────────────────────────────────────────────────────────
 for index_time in range(length):
-    if not os.path.exists(f'..\\database\\{dir}\\20_power_2.0_{index_time}.csv'):
+    if not os.path.exists(f'database\\{dir}\\20_power_2.0_{index_time}.csv'):
         save(index_time)
 
 # ── per-window: subdivide into fine time bins, fit Y in each ─────────────────
@@ -98,11 +98,11 @@ Y_values     = []
 Y_err_values = []
 t_centers    = []
 
-paths = np.array(listdir(f'..\\database\\{dir}'))
+paths = np.array(listdir(f'database\\{dir}'))
 
 for path in sorted(paths[:length]):
     print(path)
-    post_trades = pd.read_csv(f'..\\database\\{dir}\\{path}', sep=',')
+    post_trades = pd.read_csv(f'database\\{dir}\\{path}', sep=',')
 
     match = re.search(r"_(\d+)\.csv$", path)
     index = int(match.group(1))
@@ -226,7 +226,7 @@ for path in sorted(paths[:length]):
         axes_ll[idx].set_visible(False)
 
     plt.tight_layout()
-    plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_single_{index}.png', dpi=150, bbox_inches='tight')
+    plt.savefig(f'images\\impact_time_curve\\{dir}_impact_single_{index}.png', dpi=150, bbox_inches='tight')
     plt.close()
 
 t_centers    = np.array(t_centers)
@@ -280,5 +280,5 @@ plt.legend()
 plt.grid(True, which='both', ls='-')
 plt.tight_layout()
 
-plt.savefig(f'..\\images\\impact_time_curve_ext\\{dir}_impact_time_curve.png')
+plt.savefig(f'images\\impact_time_curve\\{dir}_impact_time_curve.png')
 #plt.show()
