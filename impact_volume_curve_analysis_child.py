@@ -69,15 +69,10 @@ def bin_data(df, n_bins=51):
     
     return grouped, bins
 
-def plot_stratified_impact(df, image_name, n_bins=51):
-    """Part 2: 10 subplots (2 columns x 5 rows) stratified by NbChild.
-
-    Plots are restricted to NbChild in {2, ..., 11}, but the power-law fit
-    is run for every NbChild value present in the data and printed to stdout.
+def compute_all_fits(df, n_bins=51):
+    """Runs the power-law fit for every NbChild value present in the data
+    and returns a dict {nb: {'Y':..., 'delta':..., 'Ye':..., 'de':...}}.
     """
-    plot_range = range(2, 12)
-    colors = dict(zip(plot_range, cm.tab10(np.linspace(0, 1, len(plot_range)))))
-
     all_nb_values = sorted(df['NbChild'].unique())
     all_results = {}
 
@@ -93,6 +88,16 @@ def plot_stratified_impact(df, image_name, n_bins=51):
         if fit:
             Y, delta, Ye, de = fit
             all_results[nb] = {'Y': Y, 'delta': delta, 'Ye': Ye, 'de': de}
+
+    return all_results
+
+
+def plot_stratified_impact(df, image_name, plot_range, n_bins=51):
+    """Part 2: 10 subplots (2 columns x 5 rows) stratified by NbChild.
+
+    Plots are restricted to the NbChild values in `plot_range`.
+    """
+    colors = dict(zip(plot_range, cm.tab10(np.linspace(0, 1, len(plot_range)))))
 
     fig, axes = plt.subplots(5, 2, figsize=(14, 22))
     axes_flat = axes.flatten()
@@ -145,8 +150,6 @@ def plot_stratified_impact(df, image_name, n_bins=51):
     plt.savefig(f'images\\{image_name}.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    return all_results
-
 if __name__ == "__main__":
     model = ''
     file_name_con_estensione = '20_power_2.0.csv'
@@ -162,11 +165,22 @@ if __name__ == "__main__":
         data = pd.read_csv(path_caricamento)
         df_clean = data[data['NbChild'] > 1].copy()
 
-        print(f"Generazione grafico 1 (stratificato): {nome_img_stratificato}.png")
-        all_results = plot_stratified_impact(df_clean, nome_img_stratificato)
+        # Compute the power-law fit once for every NbChild value present in the data
+        all_results = compute_all_fits(df_clean)
+
+        # Three stratified figures, each covering 10 consecutive NbChild values
+        stratified_ranges = [
+            (range(2, 12), nome_img_stratificato),
+            (range(12, 22), f"{nome_img_stratificato}_12_21"),
+            (range(22, 32), f"{nome_img_stratificato}_22_31"),
+        ]
+
+        for plot_range, img_name in stratified_ranges:
+            print(f"Generazione grafico 1 (stratificato): {img_name}.png")
+            plot_stratified_impact(df_clean, img_name, plot_range)
 
         res_df = pd.DataFrame.from_dict(all_results, orient='index').sort_index()
-        res_df = res_df[(res_df.index > 1) & (res_df.index <= 30)]
+        res_df = res_df[(res_df.index > 1) & (res_df.index <= 31)]
 
         x_data = res_df.index.values
 
