@@ -180,13 +180,13 @@ if __name__ == "__main__":
             plot_stratified_impact(df_clean, img_name, plot_range)
 
         res_df = pd.DataFrame.from_dict(all_results, orient='index').sort_index()
-        res_df = res_df[(res_df.index > 1) & (res_df.index <= 31)]
+        res_df = res_df[(res_df.index > 1) & (res_df.index <= 26)]
 
         x_data = res_df.index.values
 
         # --- Graph 2: Parameter Plots ---
         print(f"Generazione grafico 2 (fit parametri originario): {img_prefix}{function_clean}_nbchild_fit.png")
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
 
         # MIGLIORAMENTO: Barre d'errore rese più intense con colori saturi, spessore maggiore e capsize
         ax1.errorbar(x_data, res_df['Y'], yerr=res_df['Ye'], fmt='.', color='blue', 
