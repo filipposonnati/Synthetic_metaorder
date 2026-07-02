@@ -179,12 +179,12 @@ def analyse_cumulative(trades: pd.DataFrame, function: str, model: str):
     return Y, delta, Y_err, delta_err
 
 
-def analyse_linear(trades: pd.DataFrame, function: str, model: str):
-    """Fit I_i/√Q ~ Y·(Σq_i/Q) + C and save the ratio plot."""
+def analyse_linear(trades: pd.DataFrame, function: str, model: str, exponent: float = 0.5):
+    """Fit I_i/Q^exponent ~ Y·(Σq_i/Q) + C and save the ratio plot."""
     print('\n── Linear fit ──')
 
     df = trades.copy()
-    df['Ratio']           = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
+    df['Ratio']           = df['PartialImpact'] / df['MetaVolume']**exponent
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
     bins    = bin_linear()
@@ -223,7 +223,7 @@ def analyse_linear(trades: pd.DataFrame, function: str, model: str):
             label=r'$y = Yx + C$', linestyle=':', color='black', zorder=2)
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
-    ax.set_ylabel(r'$I_i / \sqrt{Q}$')
+    ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
 
@@ -233,12 +233,12 @@ def analyse_linear(trades: pd.DataFrame, function: str, model: str):
     return Y, C, Y_err, C_err
 
 
-def analyse_flat(trades: pd.DataFrame, function: str, model: str):
-    """Fit I_i/√(Σq_i) ~ Y (constant) and save the flat plot."""
+def analyse_flat(trades: pd.DataFrame, function: str, model: str, exponent: float = 0.5):
+    """Fit I_i/(Σq_i)^exponent ~ Y (constant) and save the flat plot."""
     print('\n── Flat fit ──')
 
     df = trades.copy()
-    df['Ratio']           = df['PartialImpact'] / np.sqrt(df['PartialVolume'])
+    df['Ratio']           = df['PartialImpact'] / df['PartialVolume']**exponent
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
     bins    = bin_linear()
@@ -267,7 +267,7 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
             label=r'$y = Y$', linestyle=':', color='black', zorder=2)
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
-    ax.set_ylabel(r'$I_i / \sqrt{\Sigma q_i}$')
+    ax.set_ylabel(rf'$I_i / (\Sigma q_i)^{{{exponent:g}}}$')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
 
@@ -278,8 +278,8 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
 
 
 def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
-                        child_range=range(2, 12)):
-    """Plot I_i/√Q vs Σq_i/Q for each NbChild value."""
+                        child_range=range(2, 12), exponent: float = 0.5):
+    """Plot I_i/Q^exponent vs Σq_i/Q for each NbChild value."""
     print('\n── NbChild Analysis ──')
 
     colors = plt.cm.tab10(np.linspace(0, 1, 10))
@@ -293,7 +293,7 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
             print(f'  Skipping NbChild={n_child}: insufficient data ({len(subset)} samples)')
             continue
 
-        subset['Ratio']           = subset['PartialImpact'] / np.sqrt(subset['MetaVolume'])
+        subset['Ratio']           = subset['PartialImpact'] / subset['MetaVolume']**exponent
         subset['NormalizedVolume'] = subset['PartialVolume']  / subset['MetaVolume']
 
         bins    = np.linspace(0, 1, 21)
@@ -313,7 +313,7 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
         )
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
-    ax.set_ylabel(r'$I_i / \sqrt{Q}$')
+    ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$')
     ax.legend(title='n children', fontsize=8, title_fontsize=9,
               bbox_to_anchor=(1, 1), loc='upper left')
     ax.grid(True, ls='--', alpha=0.3)
@@ -322,10 +322,10 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
     _save(f'{function}_ratio_child', model, dpi=150, bbox_inches='tight')
 
 def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
-                             min_child: int = 5):
+                             min_child: int = 5, exponent: float = 0.5):
     """
     Same as analyse_linear but restricted to metaorders with NbChild >= min_child.
-    Fits I_i/√Q ~ Y·(Σq_i/Q) + C and saves the filtered ratio plot.
+    Fits I_i/Q^exponent ~ Y·(Σq_i/Q) + C and saves the filtered ratio plot.
     """
     print(f'\n── Linear fit (NbChild ≥ {min_child}) ──')
 
@@ -336,7 +336,7 @@ def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
         print('  Insufficient data after filter – skipping.')
         return None, None
 
-    df['Ratio']            = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
+    df['Ratio']            = df['PartialImpact'] / df['MetaVolume']**exponent
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
     bins    = bin_linear()
@@ -375,7 +375,7 @@ def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
             label=r'$y = Yx + C$', linestyle=':', color='black', zorder=2)
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
-    ax.set_ylabel(r'$I_i / \sqrt{Q}$')
+    ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$')
     ax.set_title(rf'NbChild $\geq$ {min_child}')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
@@ -400,16 +400,17 @@ def _save(name: str, model: str, **kwargs):
 if __name__ == '__main__':
     function = '20_power_2.0'
     model    = ''
-    print(f'{function}  {model}')
+    exponent = 0.5  # set the exponent of Q used in I ~ Q^exponent (0.5 = square root)
+    print(f'{function}  {model}  (exponent = {exponent})')
 
     trades = load_trades(function, model)
 
-    Y_lin, C_lin, Y_lin_err, C_lin_err = analyse_linear(trades, function, model)
+    Y_lin, C_lin, Y_lin_err, C_lin_err = analyse_linear(trades, function, model, exponent=exponent)
 
-    analyse_by_nb_child(trades, function, model)
+    analyse_by_nb_child(trades, function, model, exponent=exponent)
 
-    Y_lin5, C_lin5, Y_lin5_err, C_lin5_err = analyse_linear_min_child(trades, function, model, min_child=5)
-    Y_lin10, C_lin10, Y_lin10_err, C_lin10_err = analyse_linear_min_child(trades, function, model, min_child=10)
+    Y_lin5, C_lin5, Y_lin5_err, C_lin5_err = analyse_linear_min_child(trades, function, model, min_child=5, exponent=exponent)
+    Y_lin10, C_lin10, Y_lin10_err, C_lin10_err = analyse_linear_min_child(trades, function, model, min_child=10, exponent=exponent)
 
     # ── Summary (ready for a LaTeX table) ──
     print('\n── Parameter summary ──')

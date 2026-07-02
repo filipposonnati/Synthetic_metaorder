@@ -125,7 +125,7 @@ def run_analysis(synthetic_meta, min_nb_child, max_nb_child=20, comparison_opera
 
     global_grouped.columns = ['MetaVolume_mean', 'MetaVolume_std', 'MetaImpact_mean', 'MetaImpact_std', 'sample_count']
     max_samples_global = global_grouped['sample_count'].max()
-    global_grouped = global_grouped[global_grouped['sample_count'] > 0.1 * max_samples_global]
+    global_grouped = global_grouped[global_grouped['sample_count'] > 0.5 * max_samples_global]
     # ==========================================
 
     plt.figure(figsize=(12, 8))
@@ -142,7 +142,7 @@ def run_analysis(synthetic_meta, min_nb_child, max_nb_child=20, comparison_opera
             plt.plot(
                 subset_plot['MetaVolume_mean'],
                 subset_plot['MetaImpact_mean'],
-                marker='',
+                marker='.',
                 markersize=6,
                 label=f'{nb_val}',
                 color=current_color
@@ -161,10 +161,10 @@ def run_analysis(synthetic_meta, min_nb_child, max_nb_child=20, comparison_opera
     )
 
     # 2. Plot del fit con linea continua più spessa
-    x_range = np.logspace(-5, -3, 100)
+    x_range = np.logspace(np.log10(np.min(global_grouped['MetaVolume_mean']) / 2), np.log10(np.max(global_grouped['MetaVolume_mean']) * 2), 100)
     y_theoretical = x_range**0.5
 
-    plt.plot(x_range, y_theoretical, linestyle='-', color='b', lw=2, label='$Q^{0.5}$')
+    plt.plot(x_range, y_theoretical, linestyle='-', color='b', lw=2, label='$\sqrt{Q}$')
 
     # Raffinatezze estetiche
     plt.xscale('log')
@@ -187,7 +187,7 @@ def run_analysis(synthetic_meta, min_nb_child, max_nb_child=20, comparison_opera
     plt.savefig(filepath)
     print(f'Salvata immagine: {filepath}')
 
-    plt.show()
+    #plt.show()
     plt.close()
 
 
