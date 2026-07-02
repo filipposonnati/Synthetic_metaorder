@@ -8,19 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
-try:
-    from tqdm import tqdm
-except ImportError:
-    # Minimal fallback so the script still runs (and still shows *some*
-    # progress) even if tqdm isn't installed. `pip install tqdm` for the
-    # real progress bar.
-    def tqdm(iterable, total=None, desc=None, unit=None):
-        total = total if total is not None else (len(iterable) if hasattr(iterable, '__len__') else None)
-        prefix = f'{desc}: ' if desc else ''
-        for i, item in enumerate(iterable, 1):
-            end = '\n' if (total is not None and i == total) else '\r'
-            print(f'{prefix}{i}/{total if total is not None else "?"}', end=end, flush=True)
-            yield item
+from tqdm import tqdm
 
 
 def post_impact_model(x, a, beta):
@@ -191,7 +179,7 @@ plt.rcParams.update({
 
 dir           = 'post_transaction_trades'  # output folder for windowed CSVs
 images_subdir = 'impact_transaction_time_curve'
-length        = 2       # number of meta_duration windows
+length        = 4       # number of meta_duration windows
 n_time_bins   = 10      # fine time bins per window
 
 # ── ensure CSVs exist and are non-empty ──────────────────────────────────────
