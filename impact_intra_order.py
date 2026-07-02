@@ -24,8 +24,8 @@ plt.rcParams.update({
 def power_law(x, Y, delta):
     return Y * x**delta
 
-def square_root(x, Y):
-    return Y * np.sqrt(x)
+def linear(x, Y, C):
+    return Y * x + C
 
 def constant(x, Y):
     return Y
@@ -94,12 +94,6 @@ def report_fit(label: str, popt, popt_err, param_names):
 
 def bin_log(series: pd.Series, n_bins: int = 51):
     return np.logspace(np.log10(series.min()), np.log10(series.max()), n_bins)
-
-def bin_linear_cubic(n_bins: int = 21):
-    return np.linspace(0, 1, n_bins)**3
-
-def bin_linear_quadratic(n_bins: int = 21):
-    return np.linspace(0, 1, n_bins)**2
 
 def bin_linear(n_bins: int = 26):
     return np.linspace(0, 1, n_bins)
@@ -185,15 +179,15 @@ def analyse_cumulative(trades: pd.DataFrame, function: str, model: str):
     return Y, delta, Y_err, delta_err
 
 
-def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
-    """Fit I_i/√Q ~ Y·√(Σq_i/Q) and save the ratio plot."""
-    print('\n── Square-root fit ──')
+def analyse_linear(trades: pd.DataFrame, function: str, model: str):
+    """Fit I_i/√Q ~ Y·(Σq_i/Q) + C and save the ratio plot."""
+    print('\n── Linear fit ──')
 
     df = trades.copy()
     df['Ratio']           = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
-    bins    = bin_linear_quadratic()
+    bins    = bin_linear()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
 
     x     = grouped['x_mean'].to_numpy()
@@ -202,22 +196,22 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
     y_err = grouped['y_err'].to_numpy()
 
     # No-error fit
-    popt0, _, perr0 = fit_iterative(square_root, x, y, y_err)
-    report_fit('no err', popt0, perr0, ['Y'])
+    popt0, _, perr0 = fit_iterative(linear, x, y, y_err)
+    report_fit('no err', popt0, perr0, ['Y', 'C'])
 
     # y-error only
-    popt1, _, perr1 = fit_iterative(square_root, x, y, y_err)
-    report_fit('y err', popt1, perr1, ['Y'])
+    popt1, _, perr1 = fit_iterative(linear, x, y, y_err)
+    report_fit('y err', popt1, perr1, ['Y', 'C'])
 
-    # Effective error – ∂(Y√x)/∂x = Y/(2√x)
+    # Effective error – ∂(Yx+C)/∂x = Y
     def grad(popt, x):
-        return popt[0] * 0.5 * x**(-0.5)
+        return np.full_like(x, popt[0])
 
-    popt, _, perr = fit_iterative(square_root, x, y, y_err, x_err,
+    popt, _, perr = fit_iterative(linear, x, y, y_err, x_err,
                                   x_err_gradient=grad)
-    report_fit('eff err', popt, perr, ['Y'])
+    report_fit('eff err', popt, perr, ['Y', 'C'])
 
-    Y, Y_err = popt[0], perr[0]
+    Y, C, Y_err, C_err = popt[0], popt[1], perr[0], perr[1]
 
     # ── Plot ──
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -225,8 +219,8 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
                 linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
     x_th = np.linspace(0.0, 1.0, 50)
-    ax.plot(x_th, Y * np.sqrt(x_th),
-            label=r'$y = Y\sqrt{x}$', linestyle=':', color='black', zorder=2)
+    ax.plot(x_th, Y * x_th + C,
+            label=r'$y = Yx + C$', linestyle=':', color='black', zorder=2)
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
     ax.set_ylabel(r'$I_i / \sqrt{Q}$')
@@ -236,7 +230,7 @@ def analyse_square_root(trades: pd.DataFrame, function: str, model: str):
     plt.tight_layout()
     _save(f'{function}_ratio', model)
 
-    return Y, Y_err
+    return Y, C, Y_err, C_err
 
 
 def analyse_flat(trades: pd.DataFrame, function: str, model: str):
@@ -247,7 +241,7 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str):
     df['Ratio']           = df['PartialImpact'] / np.sqrt(df['PartialVolume'])
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
-    bins    = bin_linear_quadratic()
+    bins    = bin_linear()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
 
     x     = grouped['x_mean'].to_numpy()
@@ -288,8 +282,7 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
     """Plot I_i/√Q vs Σq_i/Q for each NbChild value."""
     print('\n── NbChild Analysis ──')
 
-    colors     = plt.cm.tab10(np.linspace(0, 1, 10))
-    linestyles = ['-', '--', '-.', ':', '-', '--', '-.', ':', '-', '--']
+    colors = plt.cm.tab10(np.linspace(0, 1, 10))
 
     fig, ax = plt.subplots(figsize=(11, 7))
 
@@ -303,7 +296,7 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
         subset['Ratio']           = subset['PartialImpact'] / np.sqrt(subset['MetaVolume'])
         subset['NormalizedVolume'] = subset['PartialVolume']  / subset['MetaVolume']
 
-        bins    = np.linspace(0, 1, 21)**2
+        bins    = np.linspace(0, 1, 21)
         grouped = group_by_bins(subset, 'NormalizedVolume', 'Ratio', bins)
 
         ax.errorbar(
@@ -312,7 +305,7 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
             xerr=grouped['x_err'].to_numpy(),
             yerr=grouped['y_err'].to_numpy(),
             color=colors[idx],
-            linestyle=linestyles[idx],
+            linestyle='-',
             linewidth=1.5,
             alpha=0.85,
             capsize=2,
@@ -328,13 +321,13 @@ def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
     plt.tight_layout()
     _save(f'{function}_ratio_child', model, dpi=150, bbox_inches='tight')
 
-def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: str,
-                                  min_child: int = 5):
+def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
+                             min_child: int = 5):
     """
-    Same as analyse_square_root but restricted to metaorders with NbChild >= min_child.
-    Fits I_i/√Q ~ Y·√(Σq_i/Q) and saves the filtered ratio plot.
+    Same as analyse_linear but restricted to metaorders with NbChild >= min_child.
+    Fits I_i/√Q ~ Y·(Σq_i/Q) + C and saves the filtered ratio plot.
     """
-    print(f'\n── Square-root fit (NbChild ≥ {min_child}) ──')
+    print(f'\n── Linear fit (NbChild ≥ {min_child}) ──')
 
     df = trades[trades['NbChild'] >= min_child].copy()
     print(f'  Rows after filter: {len(df):,}  (dropped {len(trades) - len(df):,})')
@@ -346,7 +339,7 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
     df['Ratio']            = df['PartialImpact'] / np.sqrt(df['MetaVolume'])
     df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
 
-    bins    = bin_linear_quadratic()
+    bins    = bin_linear()
     grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
 
     x     = grouped['x_mean'].to_numpy()
@@ -355,22 +348,22 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
     y_err = grouped['y_err'].to_numpy()
 
     # No-error fit
-    popt0, _, perr0 = fit_iterative(square_root, x, y, y_err)
-    report_fit('no err', popt0, perr0, ['Y'])
+    popt0, _, perr0 = fit_iterative(linear, x, y, y_err)
+    report_fit('no err', popt0, perr0, ['Y', 'C'])
 
     # y-error only
-    popt1, _, perr1 = fit_iterative(square_root, x, y, y_err)
-    report_fit('y err', popt1, perr1, ['Y'])
+    popt1, _, perr1 = fit_iterative(linear, x, y, y_err)
+    report_fit('y err', popt1, perr1, ['Y', 'C'])
 
-    # Effective error – ∂(Y√x)/∂x = Y/(2√x)
+    # Effective error – ∂(Yx+C)/∂x = Y
     def grad(popt, x):
-        return popt[0] * 0.5 * x**(-0.5)
+        return np.full_like(x, popt[0])
 
-    popt, _, perr = fit_iterative(square_root, x, y, y_err, x_err,
+    popt, _, perr = fit_iterative(linear, x, y, y_err, x_err,
                                   x_err_gradient=grad)
-    report_fit('eff err', popt, perr, ['Y'])
+    report_fit('eff err', popt, perr, ['Y', 'C'])
 
-    Y, Y_err = popt[0], perr[0]
+    Y, C, Y_err, C_err = popt[0], popt[1], perr[0], perr[1]
 
     # ── Plot ──
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -378,8 +371,8 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
                 linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
 
     x_th = np.linspace(0.0, 1.0, 50)
-    ax.plot(x_th, Y * np.sqrt(x_th),
-            label=r'$y = Y\sqrt{x}$', linestyle=':', color='black', zorder=2)
+    ax.plot(x_th, Y * x_th + C,
+            label=r'$y = Yx + C$', linestyle=':', color='black', zorder=2)
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
     ax.set_ylabel(r'$I_i / \sqrt{Q}$')
@@ -390,7 +383,7 @@ def analyse_square_root_min_child(trades: pd.DataFrame, function: str, model: st
     plt.tight_layout()
     _save(f'{function}_ratio_min{min_child}child', model)
 
-    return Y, Y_err
+    return Y, C, Y_err, C_err
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -411,17 +404,17 @@ if __name__ == '__main__':
 
     trades = load_trades(function, model)
 
-    #Y_cum, delta_cum, Y_cum_err, delta_cum_err = analyse_cumulative(trades, function, model)
-    Y_sqrt, Y_sqrt_err                         = analyse_square_root(trades, function, model)
-    #Y_flat, Y_flat_err                         = analyse_flat(trades, function, model)
+    Y_lin, C_lin, Y_lin_err, C_lin_err = analyse_linear(trades, function, model)
 
     analyse_by_nb_child(trades, function, model)
 
-    Y_sqrt5, Y_sqrt5_err = analyse_square_root_min_child(trades, function, model, min_child=5)
+    Y_lin5, C_lin5, Y_lin5_err, C_lin5_err = analyse_linear_min_child(trades, function, model, min_child=5)
+    Y_lin10, C_lin10, Y_lin10_err, C_lin10_err = analyse_linear_min_child(trades, function, model, min_child=10)
 
     # ── Summary (ready for a LaTeX table) ──
     print('\n── Parameter summary ──')
     #print(f'  Cumulative       : Y = {Y_cum:.6g} ± {Y_cum_err:.6g},  δ = {delta_cum:.6g} ± {delta_cum_err:.6g}')
-    print(f'  Square-root      : Y = {Y_sqrt:.6g} ± {Y_sqrt_err:.6g}')
-    print(f'  Square-root ≥5ch : Y = {Y_sqrt5:.6g} ± {Y_sqrt5_err:.6g}')
+    print(f'  Linear           : Y = {Y_lin:.6g} ± {Y_lin_err:.6g},  C = {C_lin:.6g} ± {C_lin_err:.6g}')
+    print(f'  Linear ≥5ch      : Y = {Y_lin5:.6g} ± {Y_lin5_err:.6g},  C = {C_lin5:.6g} ± {C_lin5_err:.6g}')
+    print(f'  Linear ≥10ch     : Y = {Y_lin10:.6g} ± {Y_lin10_err:.6g},  C = {C_lin10:.6g} ± {C_lin10_err:.6g}')
     #print(f'  Flat             : Y = {Y_flat:.6g} ± {Y_flat_err:.6g}')

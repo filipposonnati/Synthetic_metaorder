@@ -23,9 +23,9 @@ def get_marker(kind):
     elif kind == 'uniform':
         return 'x'
     else:
-        return 's'
+        return 'x'
 
-model = ""
+model = "lmf_tim_sqrt_1.5_50"
 
 dir = 'database\\meta'
 if model != "":
@@ -34,6 +34,8 @@ if model != "":
 paths = np.array(listdir(dir))
 
 fig = plt.figure(figsize=(8, 6))
+
+cmap = plt.get_cmap('tab10')
 
 image_name = 'impact_volume_curve'
 if model != "":
@@ -49,7 +51,7 @@ if model != "":
 # \.csv             : Matches file extension
 pattern = r"meta_(?:(?P<num_one>1)|(?P<num_others>\d+)_(?P<kind>\w+?)(?:_(?P<exp>[\d.]+))?)\.csv"
 
-for path in paths:
+for i, path in enumerate(paths):
     match = re.search(pattern, path)
     num_traders = match.group('num_one') or match.group('num_others')
     kind = match.group('kind') if match.group('kind') else ""
@@ -105,7 +107,9 @@ for path in paths:
 
     #print(f'path: {path}')
 
-    plt.plot(x, y, linestyle="", marker=get_marker(kind), label = f"{label}")
+    color = cmap(i % 10)
+
+    plt.plot(x, y, linestyle="", marker=get_marker(kind), color=color, label = f"{label}")
 
 x_theoretical = np.linspace(1e-6, 1e-3, 2)
 #plt.plot(x_theoretical, np.sqrt(x_theoretical), label=r'$y = \sqrt{x}$', linestyle=':', color = "black")
