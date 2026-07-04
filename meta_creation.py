@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = "delta_0.8_1000"
+model = "timegan"
 
 data_dir = 'database\\data'
 

@@ -97,10 +97,6 @@ if __name__ == '__main__':
         # 1. Hurst Exponent (H) Distribution
         axes[0].hist(hurst_values, bins=15, density=True, color='darkblue', alpha=0.6, edgecolor='black', label='Empirical Days')
         axes[0].axvline(0.5, color='gray', linestyle='--', linewidth=2, label='White Noise Benchmark ($H=0.5$)')
-        if len(hurst_values) > 1:
-            # Simple Kernel Density Estimate line overlay
-            df_h = pd.Series(hurst_values)
-            df_h.plot(kind='density', ax=axes[0], color='red', linewidth=2, label='KDE Trend')
         axes[0].set_xlabel('Hurst Exponent ($H$)')
         axes[0].set_ylabel('Density')
         axes[0].set_title(f'Distribution of Hurst Exponent\nMean: {np.mean(hurst_values):.3f} | Std: {np.std(hurst_values):.3f}')
@@ -110,9 +106,6 @@ if __name__ == '__main__':
         # 2. Actual Measured Gamma Distribution
         axes[1].hist(gamma_values, bins=15, density=True, color='teal', alpha=0.6, edgecolor='black', label='Empirical Days')
         axes[1].axvline(1.0, color='gray', linestyle='--', linewidth=2, label='White Noise Benchmark ($\gamma=1.0$)')
-        if len(gamma_values) > 1:
-            df_g = pd.Series(gamma_values)
-            df_g.plot(kind='density', ax=axes[1], color='red', linewidth=2, label='KDE Trend')
         axes[1].set_xlabel('Correlation Exponent ($\gamma$)')
         axes[1].set_ylabel('Density')
         axes[1].set_title(f'Distribution of Correlation Exponent $\gamma$\nMean: {np.mean(gamma_values):.3f} | Std: {np.std(gamma_values):.3f}')

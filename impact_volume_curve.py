@@ -25,7 +25,7 @@ def get_marker(kind):
     else:
         return 'x'
 
-model = "lmf_tim_sqrt_1.5_50"
+model = "timegan"
 
 dir = 'database\\meta'
 if model != "":
