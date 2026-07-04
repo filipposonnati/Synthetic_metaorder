@@ -19,11 +19,6 @@ def der_post_impact(x, a, beta):
     return a * (1 - beta) * (x**(-beta) - (x - 1)**(-beta))
 
 
-def sqrt_law(Q, Y):
-    """Power law with delta fixed to 0.5: I(Q) = Y * sqrt(Q)"""
-    return Y * np.sqrt(Q)
-
-
 def save_transactions(index_time):
     """
     Extract child-order impact data in the *transaction-count* window
@@ -181,6 +176,9 @@ dir           = 'post_transaction_trades'  # output folder for windowed CSVs
 images_subdir = 'impact_transaction_time_curve'
 length        = 4       # number of meta_duration windows
 n_time_bins   = 10      # fine time bins per window
+power_exp     = 0.5     # exponent in I(Q) = Y * Q**power_exp (was fit, now fixed & averaged)
+
+min_nb_child = 5   # filter applied at analysis time, not at save time
 
 # ── ensure CSVs exist and are non-empty ──────────────────────────────────────
 def _csv_has_data_rows(path):
@@ -205,8 +203,6 @@ for index_time in range(length):
 Y_values     = []
 Y_err_values = []
 t_centers    = []
-
-min_nb_child = 5   # filter applied at analysis time, not at save time
 
 paths = np.array(listdir(f'database\\{dir}'))
 
@@ -266,31 +262,30 @@ for path in tqdm(sorted(paths[:length]), desc='windows', unit='file'):
         I     = vol_grouped['I_mean'].to_numpy()
         I_err = vol_grouped['I_std'].to_numpy() / np.sqrt(vol_grouped['count'].to_numpy())
 
-        # ── fit ────────────────────────────────────
-        try:
-            h = np.histogram(group['MetaVolume'], bins=bins_vol)
-            max_h = np.max(h[0])
+        # ── average I / Q**power_exp (no fit) ─────────────────────────────
+        h = np.histogram(group['MetaVolume'], bins=bins_vol)
+        max_h = np.max(h[0])
 
-            mask = np.where(h[0] > max_h * 0.5)
+        mask = np.where(h[0] > max_h * 0.5)
 
-            popt, pcov = curve_fit(
-                sqrt_law, Q[mask], I[mask],
-                sigma=I_err[mask], absolute_sigma=True,
-                p0=[1.0]
-            )
-            Y     = popt[0]
-            Y_err = np.sqrt(pcov[0][0])
-        except RuntimeError:
-            print(f'  Fit failed for time bin [{tb.left:.2f}, {tb.right:.2f}], skipping.')
+        if len(mask[0]) == 0:
+            print(f'  No points above histogram threshold for time bin [{tb.left:.2f}, {tb.right:.2f}], skipping.')
             continue
 
-        mask = np.where(I > 0.0)
-        Q     = Q[mask]
-        I     = I[mask]
-        I_err = I_err[mask]
+        ratios     = I[mask] / Q[mask]**power_exp
+        ratio_errs = I_err[mask] / Q[mask]**power_exp
 
-        x_fit = np.geomspace(min_vol, max_vol, 200)
-        y_fit = Y * np.sqrt(x_fit)
+        # inverse-variance weighted average of I / Q**power_exp
+        weights = 1.0 / ratio_errs**2
+        Y     = np.sum(weights * ratios) / np.sum(weights)
+        Y_err = np.sqrt(1.0 / np.sum(weights))
+
+        mask = np.where(I > 0.0)
+        Q          = Q[mask]
+        I          = I[mask]
+        I_err      = I_err[mask]
+        ratio      = I / Q**power_exp
+        ratio_err  = I_err / Q**power_exp
 
         # ── draw into the next subplot ──────────────────────────────────────
         if subplot_idx < len(axes_ll):
@@ -309,20 +304,18 @@ for path in tqdm(sorted(paths[:length]), desc='windows', unit='file'):
             ax_hist.set_zorder(ax.get_zorder() - 1)
             ax.set_facecolor('none')
 
-            # Binned mean impact with error bars
-            ax.errorbar(Q, I, yerr=I_err,
+            # Binned mean of I / Q**power_exp with error bars (no fit)
+            ax.errorbar(Q, ratio, yerr=ratio_err,
                         fmt='o', color='crimson', markersize=5,
                         linewidth=1.2, capsize=3, label='Binned mean', zorder=5)
 
-            # Square root fit curve
-            ax.plot(x_fit, y_fit,
-                    linestyle='--', color='black', linewidth=1.5,
-                    label=f'$Y\\sqrt{{Q}}$, $Y$={Y:.3f}±{Y_err:.3f}', zorder=6)
+            ax.axhline(Y, linestyle='--', color='black', linewidth=1.5,
+                       label=f'$Y$={Y:.3f}±{Y_err:.3f}', zorder=6)
 
             ax.set_xscale('log')
             ax.set_yscale('log')
             ax.set_xlabel('$Q$')
-            ax.set_ylabel(r'$I_i$')
+            ax.set_ylabel(rf'$I_i / Q^{{{power_exp}}}$')
             ax.legend(fontsize=8, loc='upper left')
             ax.grid(True, which='both', ls='--', alpha=0.3)
 
@@ -398,7 +391,7 @@ plt.errorbar(t_centers, Y_values, yerr=Y_err_values,
              linestyle='', marker='o', color='C0', label=r'$Y(t/T)$')
 
 plt.xlabel(r'$t / T$ (transactions)')
-plt.ylabel(r'$I / \sqrt{Q}$')
+plt.ylabel(rf'$I / Q^{{{power_exp}}}$')
 plt.legend()
 plt.grid(True, which='both', ls='-')
 plt.tight_layout()
