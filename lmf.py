@@ -7,7 +7,7 @@ import warnings
 def power_law(x, constant, alpha):
     return constant * x**alpha
 
-def simulate_lmf(alpha, n_traders, total_steps):
+def simulate_lmf(alpha, n_traders, total_steps, p_plus = 0.5):
     """
     Advanced simulation: pool of traders with overlapping metaorders.
     """
@@ -15,7 +15,7 @@ def simulate_lmf(alpha, n_traders, total_steps):
     
     def get_new_metaorder():
         length = int(np.random.pareto(alpha) + 1)
-        side = np.random.choice([1, -1])
+        side = np.sign(np.random.rand() - (1 - p_plus))
         return side, length
 
     for i in range(n_traders):
@@ -35,7 +35,7 @@ def simulate_lmf(alpha, n_traders, total_steps):
             
     return order_flow
 
-def simulate_lmf_lambda(alpha, lam, total_steps):
+def simulate_lmf_lambda(alpha, lam, total_steps, p_plus = 0.5):
     """
     λ-model simulation di Lillo, Mike & Farmer (2005) con tracciamento dei metaordini.
     
@@ -81,7 +81,7 @@ def simulate_lmf_lambda(alpha, lam, total_steps):
     def new_hidden_order():
         nonlocal id_counter
         length = int(np.random.pareto(alpha) + 1)
-        side = np.random.choice([1, -1])
+        side = np.sign(np.random.rand() - (1 - p_plus))
         # Struttura: [segno, tracking_lunghezza_residua, id_univoco, lunghezza_iniziale, step_nascita]
         ordine = [side, length, id_counter, length, t_attore]
         id_counter += 1
