@@ -61,114 +61,15 @@ def pooled_acf(series_list, nlags):
     # Normalize so R[0] = 1
     return sum_autocov / sum_autocov[0]
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DFA
-# ══════════════════════════════════════════════════════════════════════════════
-
-def pooled_dfa(series_list, n_vals=None):
-    """
-    Performs Pooled Detrended Fluctuation Analysis on a list of time series.
-    Assumes all series share the same scaling exponent alpha.
-
-    The fluctuation function F(n) is computed by pooling squared residuals
-    across all series and all segments before taking the square root,
-    which gives a single robust estimate per window size.
-
-    Returns:
-        alpha       -- DFA scaling exponent (slope in log-log space)
-        n_vals      -- window sizes used (after masking invalid points)
-        F_n         -- corresponding fluctuation values
-    """
-    min_len = min(len(s) for s in series_list)
-    if n_vals is None:
-        n_vals = np.unique(
-            np.logspace(np.log10(16), np.log10(min_len // 4), num=20).astype(int)
-        )
-
-    F_n = []
-
-    for n in n_vals:
-        total_squared_fluct = 0.0
-        total_segments      = 0
-        t = np.arange(n)   # reuse across segments
-
-        for x in series_list:
-            N = len(x)
-            Y = np.cumsum(x - np.mean(x))
-
-            num_segments = N // n
-            if num_segments == 0:
-                continue
-
-            # Forward pass
-            for m in range(num_segments):
-                start = m * n
-                seg   = Y[start:start + n]
-                poly  = np.polyfit(t, seg, 1)
-                total_squared_fluct += np.sum((seg - np.polyval(poly, t)) ** 2)
-                total_segments      += 1
-
-            # Backward pass (uses the tail of the series)
-            for m in range(num_segments):
-                start = N - (m + 1) * n
-                seg   = Y[start:start + n]
-                poly  = np.polyfit(t, seg, 1)
-                total_squared_fluct += np.sum((seg - np.polyval(poly, t)) ** 2)
-                total_segments      += 1
-
-        if total_segments > 0:
-            F_n.append(np.sqrt(total_squared_fluct / (total_segments * n)))
-        else:
-            F_n.append(np.nan)
-
-    n_vals = np.array(n_vals)
-    F_n    = np.array(F_n)
-    mask   = (F_n > 0) & ~np.isnan(F_n)
-
-    slope, intercept, r_value, _, std_err = linregress(
-        np.log10(n_vals[mask]), np.log10(F_n[mask])
-    )
-    alpha     = slope
-    r_squared = r_value ** 2
-
-    print("--- DFA Verification Report ---")
-    print(f"  R-squared (fit quality) : {r_squared:.4f}")
-    print(f"  Std error of alpha      : {std_err:.4f}")
-
-    # ── DFA diagnostic plot ──────────────────────────────────────────────────
-    plt.figure()
-    plt.loglog(n_vals, F_n, 'bo-', label='Pooled F(n)')
-    plt.loglog(
-        n_vals[mask],
-        10 ** intercept * n_vals[mask] ** alpha,
-        'r--',
-        label=f'Fit  α={alpha:.3f}  R²={r_squared:.3f}'
-    )
-    plt.xlabel('Window size (n)')
-    plt.ylabel('Fluctuation F(n)')
-    plt.title('Pooled DFA')
-    plt.legend()
-    plt.grid(True, which="both", ls="--")
-    plt.tight_layout()
-    os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
-    plt.savefig(os.path.join('images', 'acf', 'dfa_check.png'), dpi=150)
-    plt.close()
-
-    return alpha, n_vals[mask], F_n[mask]
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # PLOT ACF
 # ══════════════════════════════════════════════════════════════════════════════
 
 def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
     """
-    Two-panel figure:
-      Left  – first 5 daily ACFs (log-log, lags 1..50)
-      Right – pooled ACF with:
-                * direct power-law fit to the tail (lag >= 20)
-                * theoretical prediction from DFA exponent
+    Single-panel figure: pooled ACF with:
+      * direct power-law fit to the tail (lag >= 20)
+      * theoretical prediction from DFA exponent
 
     Parameters
     ----------
@@ -206,23 +107,9 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
     print(f"  Std error of slope        : {std_err_fit:.4f}")
 
     # ── figure ───────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(9, 6))
 
-    # Panel 1 – individual daily ACFs (first 5 days)
-    ax = axes[0]
-    for i, dc in enumerate(all_daily_corrs[:5]):
-        ax.plot(lags, dc[1:], lw=1.0, label=f'Day {i+1}')
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlim([1, 50])
-    ax.set_xlabel(r'Lag $\tau$')
-    ax.set_ylabel('ACF')
-    ax.set_title('Daily ACF')
-    ax.legend(fontsize=9)
-    ax.grid(True, which="both", ls="--", alpha=0.5)
-
-    # Panel 2 – pooled ACF + fits
-    ax = axes[1]
+    # Pooled ACF + fits
     ax.fill_between(
         lags,
         pooled_vals - err_vals,
@@ -251,7 +138,6 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
     ax.set_yscale('log')
     ax.set_xlabel(r'Lag $\tau$')
     ax.set_ylabel('ACF')
-    ax.set_title('Pooled ACF with Tail Fit')
     ax.legend(fontsize=9)
     ax.grid(True, which="both", ls="--", alpha=0.5)
 
@@ -290,11 +176,7 @@ if __name__ == '__main__':
         np.save(cache_path, pooled)
         print("Saved pooled ACF to cache.")
 
-    # ── DFA ──────────────────────────────────────────────────────────────────
-    alpha, scales, fluctuations = pooled_dfa(all_signs)
-    gamma_dfa = 2 - 2 * alpha
-    print(f"\nPooled DFA exponent  α      : {alpha:.4f}")
-    print(f"Predicted ACF tail exponent : {gamma_dfa:.4f}")
+    gamma_dfa = 0.752
 
     # ── Plot ─────────────────────────────────────────────────────────────────
     plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag)

@@ -111,7 +111,7 @@ if __name__ == '__main__':
     lam_c = (LMF_LAMBDA_ALPHA - 1) / LMF_LAMBDA_ALPHA
     print(f"Simulating λ-model LMF  (alpha={LMF_LAMBDA_ALPHA}, "
           f"lambda={LMF_LAMBDA}, lambda_c={lam_c:.3f}, steps={TOTAL_STEPS}) …")
-    flow_lambda, _ = simulate_lmf_lambda(LMF_LAMBDA_ALPHA, LMF_LAMBDA, TOTAL_STEPS)
+    flow_lambda, _, _ = simulate_lmf_lambda(LMF_LAMBDA_ALPHA, LMF_LAMBDA, TOTAL_STEPS)
     acf_lambda     = acf(flow_lambda, nlags=max_lag, fft=True)
     print("  done.")
 
