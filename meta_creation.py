@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = "timegan"
+model = "ar_1000"
 
 data_dir = 'database\\data'
 

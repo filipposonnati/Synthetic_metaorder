@@ -12,7 +12,6 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from utils import clear_data, open_data, save_simulated_data
 from ar import ar_fit, simulate_ar
-from noise import gaussian_fit, simulate_gaussian
 
 def power_transform(v, delta):
     """Applica la trasformazione sign(v) * |v|^delta."""
@@ -263,9 +262,9 @@ def simulate_delta_fixed(results, n_steps, initial_v, initial_r, initial_price=1
 
 paths = np.array(listdir('..\\database\\data'))
 
-p = 1
+p = 1000
 
-name = f'noise'
+name = f'ar_1000'
 
 dir = 'database\\data_' + name
 
@@ -287,28 +286,9 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p] # Prezzo reale al punto p
 
-    #results = arfima_power_fit(r, v, p=p, d=0.3) # Example d value
-    #results = ar_fit(r, v, p)
-    results = gaussian_fit(r, v)
+    results = ar_fit(r, v, p)
 
-    """
-    prices_sim, volumes_sim, r_sim = simulate_arfima_power(
-        results,
-        n_steps=len(r),
-        initial_v=initial_v,
-        initial_r=initial_r,
-        initial_price=initial_price
-    )
     prices_sim, volumes_sim, r_sim = simulate_ar(
-        results,
-        n_steps=len(r),
-        initial_v=initial_v,
-        initial_r=initial_r,
-        initial_price=initial_price
-    )
-    """
-
-    prices_sim, volumes_sim, r_sim = simulate_gaussian(
         results,
         n_steps=len(r),
         initial_v=initial_v,
