@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler
+from tqdm import tqdm
+import datetime
 
 # Impostiamo il device (GPU se disponibile, altrimenti CPU)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,7 +82,7 @@ def load_all_days(data_dir, seq_length):
     file_list = sorted(glob.glob(search_path))
 
     days = []
-    for file_path in file_list:
+    for file_path in tqdm(file_list, desc="Caricamento CSV"):
         filename = os.path.basename(file_path)
         date_part = filename.replace(".csv", "").replace("trade_", "")
         try:
@@ -112,6 +114,14 @@ def fit_global_scaler(days):
     return scaler
 
 
+def _count_sequences_for_day(n_rows, seq_length, stride):
+    """Numero di sequenze che range(0, n_rows - seq_length, stride) produrrebbe."""
+    n = n_rows - seq_length
+    if n <= 0:
+        return 0
+    return (n + stride - 1) // stride  # ceil(n / stride)
+
+
 def build_pooled_sequences(days, scaler, seq_length, stride=1):
     """
     Costruisce le sequenze di training usando lo scaler globale, mantenendo
@@ -120,18 +130,39 @@ def build_pooled_sequences(days, scaler, seq_length, stride=1):
 
     'stride' > 1 permette di ridurre il numero di sequenze sovrapposte,
     utile se il pool totale diventa troppo grande per la memoria disponibile.
+
+    NOTA SULLA MEMORIA: invece di accumulare le sequenze in una lista Python
+    e poi fare np.array(lista) + torch.tensor(...) (due copie extra dell'intero
+    pool, da cui il picco di RAM durante il caricamento), pre-allochiamo subito
+    un unico array numpy della dimensione finale esatta e lo riempiamo in place.
+    torch.from_numpy() poi non copia i dati, ma condivide lo stesso buffer.
     """
-    all_sequences = []
-    for d in days:
+    n_features = 4
+
+    # Primo passaggio (economico): calcoliamo quante sequenze totali servono,
+    # per poter allocare un solo blocco di memoria della dimensione giusta.
+    counts = [_count_sequences_for_day(len(d['data_array']), seq_length, stride) for d in days]
+    total_sequences = sum(counts)
+
+    print(f"Allocazione di un array per {total_sequences} sequenze "
+          f"({seq_length} step x {n_features} feature)...")
+    sequences_np = np.empty((total_sequences, seq_length, n_features), dtype=np.float32)
+
+    idx = 0
+    for d, n_seq_day in tqdm(zip(days, counts), total=len(days), desc="Costruzione sequenze"):
+        if n_seq_day == 0:
+            continue
+
         data_array = d['data_array']
         scaled_cont = scaler.transform(data_array[:, :3])
         scaled_signs = np.where(data_array[:, 3] == 1, 1.0, 0.0).reshape(-1, 1)
-        dataset_scaled = np.hstack([scaled_cont, scaled_signs])
+        dataset_scaled = np.hstack([scaled_cont, scaled_signs]).astype(np.float32)
 
-        for i in range(0, len(dataset_scaled) - seq_length, stride):
-            all_sequences.append(dataset_scaled[i:i + seq_length])
+        for j, i in enumerate(range(0, len(dataset_scaled) - seq_length, stride)):
+            sequences_np[idx + j] = dataset_scaled[i:i + seq_length]
+        idx += n_seq_day
 
-    sequences = torch.tensor(np.array(all_sequences), dtype=torch.float32)
+    sequences = torch.from_numpy(sequences_np)
     return sequences
 
 
@@ -190,13 +221,15 @@ def train_gan(sequences, epochs=5, batch_size=128, latent_dim=10,
     # Loop di addestramento
     generator.train()
     discriminator.train()
-    for epoch in range(epochs):
+    epoch_bar = tqdm(range(epochs), desc="Epoche", unit="epoca")
+    for epoch in epoch_bar:
         # L'instance noise decresce linearmente fino a 0 man mano che
         # l'addestramento procede: aiuta soprattutto nelle prime epoche,
         # quando il discriminatore rischia di "imparare a memoria".
         noise_std = instance_noise_start * max(0.0, 1.0 - epoch / max(1, epochs - 1))
 
-        for i, (real_seqs,) in enumerate(dataloader):
+        batch_bar = tqdm(dataloader, desc=f"  Epoca {epoch+1}/{epochs}", leave=False, unit="batch")
+        for i, (real_seqs,) in enumerate(batch_bar):
             real_seqs = real_seqs.to(device)
             current_batch_size = real_seqs.size(0)
 
@@ -262,8 +295,22 @@ def train_gan(sequences, epochs=5, batch_size=128, latent_dim=10,
             g_loss.backward()
             g_optimizer.step()
 
-        print(f"   Epoca [{epoch+1}/{epochs}] | D Loss: {d_loss.item():.4f} | "
-              f"G Loss: {g_loss.item():.4f} | D Acc: {d_acc:.2f} | Noise: {noise_std:.3f}")
+            # Aggiorniamo la progress bar del batch con le metriche correnti,
+            # cosi si vede l'andamento in tempo reale e non solo a fine epoca.
+            batch_bar.set_postfix({
+                "D_loss": f"{d_loss.item():.4f}",
+                "G_loss": f"{g_loss.item():.4f}",
+                "D_acc": f"{d_acc:.2f}",
+            })
+
+        epoch_bar.set_postfix({
+            "D_loss": f"{d_loss.item():.4f}",
+            "G_loss": f"{g_loss.item():.4f}",
+            "D_acc": f"{d_acc:.2f}",
+            "noise": f"{noise_std:.3f}",
+        })
+        tqdm.write(f"   Epoca [{epoch+1}/{epochs}] | D Loss: {d_loss.item():.4f} | "
+                   f"G Loss: {g_loss.item():.4f} | D Acc: {d_acc:.2f} | Noise: {noise_std:.3f}")
 
     return generator, discriminator
 
@@ -381,11 +428,13 @@ def run_review_round(data_dir='database\\data', checkpoint_dir='database\\checkp
     with open(round_counter_path, 'w') as f:
         f.write(str(round_num))
 
-    review_path = os.path.join(review_dir, 'review_sample.csv')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    review_path = os.path.join(review_dir, f'review_{timestamp}.csv')
     generate_synthetic_data(
         generator=generator,
         scaler=scaler,
-        num_trades_to_generate=min(len(days[0]['data_array']), 5000),
+        num_trades_to_generate=min(len(days[0]['data_array']), 50000),
         seq_length=seq_length,
         latent_dim=latent_dim,
         output_path=review_path
@@ -490,7 +539,7 @@ if __name__ == "__main__":
     # giorno durante il pooling. stride=1 usa tutte le sequenze possibili
     # (massima qualità, massimo uso di memoria); aumentalo (es. 5 o 10) se
     # il pool totale non entra in memoria con molti giorni di dati.
-    STRIDE = 1
+    STRIDE = 10
 
     if TRAINING_MODE:
         run_review_round(
@@ -499,7 +548,7 @@ if __name__ == "__main__":
             review_dir='database\\review',
             seq_length=100,
             latent_dim=10,
-            epochs_per_round=5,  # quante epoche in più ad ogni rilancio dello script
+            epochs_per_round=1,  # quante epoche in più ad ogni rilancio dello script
             stride=STRIDE
         )
     else:
