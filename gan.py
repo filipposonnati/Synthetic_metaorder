@@ -7,7 +7,7 @@ import pandas as pd
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
-import datetime
+from datetime import datetime
 
 # Impostiamo il device (GPU se disponibile, altrimenti CPU)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
