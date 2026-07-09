@@ -251,7 +251,7 @@ if __name__ == "__main__":
             "includi_intraday": False,  # tempi non sensati -> escluso dal profilo intraday
         },
         "MEM": {
-            "path": "database\data_lmf_tim_lin_mem_1.5_50\data_2023-01-03_type4_aggregato_auction.csv",
+            "path": "database\data_lmf_tim_sqrt_mem_1.5_50\data_2023-01-03_type4_aggregato_auction.csv",
             "includi_intraday": False,  # tempi non sensati -> escluso dal profilo intraday
         },
     }
