@@ -1,6 +1,8 @@
 """
 Confronto delle distribuzioni di volume (normalizzate rispetto al volume
-giornaliero) tra piu' file CSV.
+giornaliero) tra più file CSV. Il file di review rimane fisso, mentre per le
+altre cartelle vengono estratti N file casuali e uniti in un'unica 
+distribuzione per ciascuna cartella.
 
 ASSUNZIONI SUI FILE CSV
 -----------------------
@@ -16,26 +18,20 @@ ASSUNZIONI SUI FILE CSV
 COSA PRODUCE LO SCRIPT
 -----------------------
   1. Istogramma "a gradini" (step, non riempito) in scala log-log
-     -> con piu' serie sovrapposte le barre riempite si confondono,
-        i gradini restano leggibili anche con 3+ distribuzioni
   2. Boxplot colorato -> confronto rapido di mediana, quartili, code
   3. ECDF in scala log sull'asse x
   4. Profilo intraday (volume medio normalizzato per fascia oraria)
-     -> SOLO per i dataset marcati come "includi_intraday": True nella
-        configurazione. Utile per escludere dataset con tempi non
-        sensati (es. dati sintetici / AR senza una vera scala oraria).
+     -> SOLO per i dataset marcati come "includi_intraday": True.
 
 Tutti i grafici vengono salvati in: images/volume_comparison/
-
-Modifica la sezione "CONFIGURAZIONE" in fondo con i path reali dei tuoi file.
 """
 from __future__ import annotations
 import os
+import random
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-
 
 
 CARTELLA_OUTPUT = os.path.join("images", "volume_comparison")
@@ -115,11 +111,6 @@ def _salva(fig, nome_file: str):
 def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: dict[str, bool] | None = None):
     """
     Confronta piu' distribuzioni normalizzate.
-
-    intraday_flags: dict {nome_dataset: True/False}. Se None, il profilo
-    intraday viene calcolato per tutti i dataset che hanno la colonna
-    'ora_ore'. Se specificato, solo i dataset con flag True (e con
-    'ora_ore' disponibile) entrano nel grafico del profilo intraday.
     """
     nomi = list(dati_dict.keys())
     serie_dict = {nome: df["volume_norm"] for nome, df in dati_dict.items()}
@@ -161,7 +152,7 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
     _salva(fig, "histograms.png")
     plt.close(fig)
 
-    # --- 2. Boxplot comparativo (più curato) ---
+    # --- 2. Boxplot comparativo ---
     fig, ax = plt.subplots(figsize=(1.8 * len(nomi) + 2, 6))
     bp = ax.boxplot(
         [serie_dict[nome].values for nome in nomi],
@@ -203,7 +194,7 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
     _salva(fig, "ecdf.png")
     plt.close(fig)
 
-    # --- 4. Profilo intraday (solo per i dataset abilitati e con orario) ---
+    # --- 4. Profilo intraday ---
     nomi_da_includere = [
         nome for nome in nomi
         if intraday_flags.get(nome, True) and "ora_ore" in dati_dict[nome].columns
@@ -230,33 +221,85 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
         print("\n(Nessun dataset abilitato/con orario valido: salto il grafico del profilo intraday)")
 
 
+def estrai_file_casuali(cartella_path: str, n: int) -> list[str]:
+    """
+    Sceglie casualmente n file CSV all'interno di una cartella specifica.
+    Se nella cartella ci sono meno file di n, li prende tutti.
+    """
+    if not os.path.exists(cartella_path):
+        print(f"Errore: La cartella '{cartella_path}' non esiste.")
+        return []
+    
+    files = [f for f in os.listdir(cartella_path) if f.endswith(".csv") and os.path.isfile(os.path.join(cartella_path, f))]
+    
+    if not files:
+        print(f"Attenzione: Nessun file CSV trovato nella cartella '{cartella_path}'.")
+        return []
+        
+    n_da_estrarre = min(n, len(files))
+    file_scelti = random.sample(files, n_da_estrarre)
+    
+    return [os.path.join(cartella_path, f) for f in file_scelti]
+
+
 if __name__ == "__main__":
-    # ======================
-    # CONFIGURAZIONE
-    # ======================
-    # Per ogni dataset: path del CSV e flag "includi_intraday" per
-    # decidere se includerlo nel grafico del profilo orario (punto 4).
-    # Utile per escludere dataset con tempi non sensati (es. l'AR).
-    CONFIG = {
-        "GAN review": {
-            "path": "database/review/review_20260708_153517.csv",
-            "includi_intraday": True,
-        },
+    # =========================================================================
+    # CONFIGURAZIONE GENERALE: QUI MODIFICHI IL VALORE DI N
+    # =========================================================================
+    N_FILES = 3  # Quanti file estrarre a caso e UNIRE da ciascuna cartella (Real, AR, MEM)
+
+    dati = {}
+    intraday_flags = {}
+    
+    # 1. Caricamento del file fisso di REVIEW (singolo e specifico)
+    path_review_fisso = "database/review/review_20260708_153517.csv"
+    if os.path.exists(path_review_fisso):
+        try:
+            dati["GAN review"] = carica_e_normalizza(path_review_fisso)
+            intraday_flags["GAN review"] = True
+            print(f"- File specifico caricato per [GAN review]: {path_review_fisso}")
+        except Exception as e:
+            print(f"Errore nel caricamento del file di review: {e}")
+    else:
+        print(f"Attenzione: File di review '{path_review_fisso}' non trovato.")
+
+    # 2. Struttura delle cartelle esplicite da cui estrarre N file e unirli
+    STRUTTURA_CARTELLE = {
         "Real": {
-            "path": "database/data/data_2023-01-03_type4_aggregato_auction.csv",
+            "cartella": "database/data",
             "includi_intraday": True,
         },
         "AR": {
-            "path": "database/data_ar_1000/data_2023-01-03_type4_aggregato_auction.csv",
-            "includi_intraday": False,  # tempi non sensati -> escluso dal profilo intraday
+            "cartella": "database/data_ar_1000",
+            "includi_intraday": False,
         },
         "MEM": {
-            "path": "database\data_lmf_tim_sqrt_mem_1.5_50\data_2023-01-03_type4_aggregato_auction.csv",
-            "includi_intraday": False,  # tempi non sensati -> escluso dal profilo intraday
+            "cartella": r"database\data_lmf_tim_sqrt_mem_1.5_50", # Preservato raw string originale
+            "includi_intraday": False,
         },
     }
 
-    dati = {nome: carica_e_normalizza(cfg["path"]) for nome, cfg in CONFIG.items()}
-    intraday_flags = {nome: cfg["includi_intraday"] for nome, cfg in CONFIG.items()}
+    print(f"\n=== Estrazione casuale di {N_FILES} file per cartella (Uniti insieme) ===")
+    for etichetta, info in STRUTTURA_CARTELLE.items():
+        files_estratti = estrai_file_casuali(info["cartella"], N_FILES)
+        
+        dfs_da_unire = []
+        for file_estratto in files_estratti:
+            print(f"- Per [{etichetta}] estratto casualmente: {file_estratto}")
+            try:
+                df_singolo = carica_e_normalizza(file_estratto)
+                dfs_da_unire.append(df_singolo)
+            except Exception as e:
+                print(f"Errore nel caricamento di {file_estratto}: {e}")
+        
+        # Se abbiamo caricato con successo almeno un file, li uniamo in un unico blocco dati
+        if dfs_da_unire:
+            dati[etichetta] = pd.concat(dfs_da_unire, ignore_index=True)
+            intraday_flags[etichetta] = info["includi_intraday"]
 
-    confronta_distribuzioni(dati, intraday_flags)
+    print("====================================================================\n")
+
+    if dati:
+        confronta_distribuzioni(dati, intraday_flags)
+    else:
+        print("Impossibile procedere: configurazione o dati assenti.")
