@@ -153,13 +153,12 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
                 linewidth=2.2, label=nome, color=colori[nome])
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("Volume normalizzato (scala log)")
-    ax.set_ylabel("Densita' (scala log)")
-    ax.set_title("Confronto distribuzioni volumi normalizzati (log-log)")
+    ax.set_xlabel("Normalized Volume")
+    ax.set_ylabel("Density")
     ax.grid(alpha=0.3, which="both")
     ax.legend(frameon=False)
     fig.tight_layout()
-    _salva(fig, "confronto_istogrammi_log.png")
+    _salva(fig, "histograms.png")
     plt.close(fig)
 
     # --- 2. Boxplot comparativo (più curato) ---
@@ -182,13 +181,10 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
         patch.set_edgecolor(colori[nome])
 
     ax.set_yscale("log")
-    ax.set_ylabel("Volume normalizzato (scala log)")
-    ax.set_title("Confronto distribuzioni: boxplot")
+    ax.set_ylabel("Normalized Volume")
     ax.grid(axis="y", alpha=0.3, which="both")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
     fig.tight_layout()
-    _salva(fig, "confronto_boxplot.png")
+    _salva(fig, "boxplot.png")
     plt.close(fig)
 
     # --- 3. ECDF in scala log sull'asse x ---
@@ -198,13 +194,13 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
         y = np.arange(1, len(s_sorted) + 1) / len(s_sorted)
         ax.plot(s_sorted, y, label=nome, color=colori[nome], linewidth=2)
     ax.set_xscale("log")
-    ax.set_xlabel("Volume normalizzato (scala log)")
-    ax.set_ylabel("Probabilita' cumulata")
-    ax.set_title("ECDF - confronto distribuzioni (asse x log)")
+    ax.set_xlabel("Normalized Volume")
+    ax.set_ylabel("Cumulative probability")
+    ax.set_title("ECDF")
     ax.grid(alpha=0.3, which="both")
     ax.legend(frameon=False)
     fig.tight_layout()
-    _salva(fig, "confronto_ecdf_log.png")
+    _salva(fig, "ecdf.png")
     plt.close(fig)
 
     # --- 4. Profilo intraday (solo per i dataset abilitati e con orario) ---
@@ -221,13 +217,12 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
             minuto = (df["ora_ore"] * 60).round() / 60.0
             profilo = df.groupby(minuto)["volume_norm"].mean().sort_index()
             ax.plot(profilo.index, profilo.values, label=nome, color=colori[nome], linewidth=2)
-        ax.set_xlabel("Ora del giorno")
-        ax.set_ylabel("Volume normalizzato medio")
-        ax.set_title("Profilo intraday medio del volume")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Normalized Volume")
         ax.grid(alpha=0.3)
         ax.legend(frameon=False)
         fig.tight_layout()
-        _salva(fig, "confronto_profilo_intraday.png")
+        _salva(fig, "intraday_profile.png")
         plt.close(fig)
         if esclusi:
             print(f"\n(Esclusi dal profilo intraday: {', '.join(esclusi)})")
@@ -253,6 +248,10 @@ if __name__ == "__main__":
         },
         "AR": {
             "path": "database/data_ar_1000/data_2023-01-03_type4_aggregato_auction.csv",
+            "includi_intraday": False,  # tempi non sensati -> escluso dal profilo intraday
+        },
+        "MEM": {
+            "path": "database\data_lmf_tim_lin_mem_1.5_50\data_2023-01-03_type4_aggregato_auction.csv",
             "includi_intraday": False,  # tempi non sensati -> escluso dal profilo intraday
         },
     }

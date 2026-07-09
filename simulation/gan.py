@@ -543,9 +543,9 @@ if __name__ == "__main__":
 
     if TRAINING_MODE:
         run_review_round(
-            data_dir='database\\data',
-            checkpoint_dir='database\\checkpoints',
-            review_dir='database\\review',
+            data_dir='..\\database\\data',
+            checkpoint_dir='..\\database\\checkpoints',
+            review_dir='..\\database\\review',
             seq_length=100,
             latent_dim=10,
             epochs_per_round=1,  # quante epoche in più ad ogni rilancio dello script
@@ -553,9 +553,9 @@ if __name__ == "__main__":
         )
     else:
         train_and_generate_all_days(
-            data_dir='database\\data',
-            output_dir='database\\data_timegan',
-            checkpoint_dir='database\\checkpoints',
+            data_dir='..\\database\\data',
+            output_dir='..\\database\\data_gan',
+            checkpoint_dir='..\\database\\checkpoints',
             seq_length=100,
             latent_dim=10,
             epochs=20,

@@ -711,7 +711,7 @@ def run(data_dir  = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir  = r"..\database\data",
-        out_dir   = r"..\database\data_lmf_tim_lin",
+        out_dir   = r"..\database\data_lmf_tim_sqrt_mem_1.5_50",
 
         # LMF
         alpha     = 1.5,    # esponente Pareto (1 < alpha < 2 -> memoria lunga)
@@ -721,11 +721,11 @@ if __name__ == '__main__':
         volume_model = 'mem_acd',  # 'mem_acd' (consigliato) o 'log_ar' (legacy)
         mem_p     = 1,      # ordine AR di mu_t sui volumi passati
         mem_q     = 1,      # ordine MA di mu_t sulla media condizionata passata
-        ar_order  = 1000,   # usato solo se volume_model='log_ar' (ridotto auto se insufficiente)
+        ar_order  = 100,   # usato solo se volume_model='log_ar' (ridotto auto se insufficiente)
 
         # TIM
         beta      = 0.25,    # esponente decadimento kernel power-law
-        delta     = 1.0,    # esponente impact (0.5 = square-root)
+        delta     = 0.5,    # esponente impact (0.5 = square-root)
         # sigma_f e sigma_eta: calibrati automaticamente dai dati reali
 
         kernel_L  = 500,    # memoria massima kernel (in trade)
