@@ -470,11 +470,11 @@ def run(data_dir  = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir     = r"..\database\data",
-        out_dir      = r"..\database\data_lmf_tim_sqrt_mem_1.5_50",
+        out_dir      = r"..\database\data_lmf_1.5_50_log_ar_tim_sqrt",
         alpha        = 1.5,
         n_traders    = 50,
-        volume_model = 'mem_acd',
-        mem_dist     = 'lognormal',  # Cambia rapidamente qui: 'inverse_gaussian' | 'lognormal' | 'burr12'
+        volume_model = 'log_ar', # 'mem_acd' | 'log_ar'
+        mem_dist     = 'burr12',  # 'inverse_gaussian' | 'lognormal' | 'burr12'
         mem_p        = 1,
         mem_q        = 1,
         beta         = 0.25,

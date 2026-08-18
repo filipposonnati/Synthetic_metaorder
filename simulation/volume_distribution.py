@@ -125,7 +125,7 @@ def main():
     args = ap.parse_args()
 
     # Spostata la cartella di salvataggio dentro ./images
-    out_dir = Path("../images/volume_distrib")
+    out_dir = Path("../images/volume_distribution")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Estrazione residui...")
@@ -135,8 +135,8 @@ def main():
     results = [fit_candidate(name, z) for name in CANDIDATES]
 
     # Generazione dei grafici utili
-    make_density_overlay(z, results, out_dir / "densita_confronto.png")
-    make_acf_diagnostic(z, out_dir / "residui_acf_diagnostica.png")
+    make_density_overlay(z, results, out_dir / "density.png")
+    make_acf_diagnostic(z, out_dir / "residuals_acf.png")
 
 if __name__ == "__main__":
     main()

@@ -152,7 +152,7 @@ def plot_stratified_impact(df, image_name, plot_range, n_bins=51):
 
 if __name__ == "__main__":
     model = ''
-    file_name_con_estensione = '20_power_2.0.csv'
+    file_name_con_estensione = '1.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
     folder_prefix = f"meta_tail_{model}" if model else "meta_tail"

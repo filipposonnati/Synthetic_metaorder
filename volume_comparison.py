@@ -273,8 +273,8 @@ if __name__ == "__main__":
             "cartella": "database/data_ar_1000",
             "includi_intraday": False,
         },
-        "MEM": {
-            "cartella": r"database\data_lmf_tim_sqrt_mem_1.5_50", # Preservato raw string originale
+        "MEM lognormal": {
+            "cartella": r"database\data_lmf_1.5_50_mem_lognormal_tim_sqrt", # Preservato raw string originale
             "includi_intraday": False,
         },
     }
