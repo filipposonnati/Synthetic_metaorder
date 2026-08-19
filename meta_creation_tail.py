@@ -6,7 +6,7 @@ from os import listdir
 import methods
 
 model = ""
-N_REALIZATIONS = 1
+N_REALIZATIONS = 500
 MIN_CHILD = 1
 MAX_PER_CHILD = 1_000_000  # cap per NbChild value; None = no cap
 
@@ -15,7 +15,7 @@ MAX_PER_CHILD = 1_000_000  # cap per NbChild value; None = no cap
 #   CONFIG_INDICES = [2]        -> run only row 2
 #   CONFIG_INDICES = [0, 3, 7]  -> run rows 0, 3 and 7
 #   CONFIG_INDICES = "all"      -> run every row (old behavior)
-CONFIG_INDICES = [6]
+CONFIG_INDICES = [3]
 
 # Re-run a configuration even if its state file says it's already complete.
 FORCE = False
