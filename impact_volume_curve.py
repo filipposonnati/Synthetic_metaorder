@@ -25,7 +25,7 @@ def get_marker(kind):
     else:
         return 'x'
 
-model = "timegan"
+model = ""
 
 dir = 'database\\meta'
 if model != "":

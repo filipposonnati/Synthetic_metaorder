@@ -15,7 +15,7 @@ MAX_PER_CHILD = 1_000_000  # cap per NbChild value; None = no cap
 #   CONFIG_INDICES = [2]        -> run only row 2
 #   CONFIG_INDICES = [0, 3, 7]  -> run rows 0, 3 and 7
 #   CONFIG_INDICES = "all"      -> run every row (old behavior)
-CONFIG_INDICES = [3]
+CONFIG_INDICES = [8]
 
 # Re-run a configuration even if its state file says it's already complete.
 FORCE = False
@@ -59,10 +59,10 @@ def run_configuration(configuration, data_dir, meta_dir, paths, force=False):
 
     if nb_traders == 1:
         filename = f'meta_{nb_traders}.csv'
-    elif kind == 'power':
-        filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
-    else:
+    elif kind == 'uniform':
         filename = f'meta_{nb_traders}_{kind}.csv'
+    else:
+        filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
 
     full_path = os.path.join(meta_dir, filename)
 

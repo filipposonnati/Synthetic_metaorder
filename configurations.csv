@@ -6,3 +6,5 @@ nb_traders,kind,exponent
 20,uniform,0.0
 40,power,2.0
 1,uniform,0.0
+20,powerpareto,2.0
+20,powerscipy,2.0

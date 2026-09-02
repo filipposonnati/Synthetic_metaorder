@@ -343,7 +343,7 @@ def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
 
     ax.set_xlabel('TradedVolume')
     ax.set_ylabel(r'$I_i / \sqrt{Q}$')
-    ax.set_title(rf'NbChild $\geq$ {min_child}')
+    #ax.set_title(rf'NbChild $\geq$ {min_child}')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
 

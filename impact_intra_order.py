@@ -376,7 +376,7 @@ def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
 
     ax.set_xlabel(r'$\Sigma q_i / Q$')
     ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$')
-    ax.set_title(rf'NbChild $\geq$ {min_child}')
+    #ax.set_title(rf'NbChild $\geq$ {min_child}')
     ax.legend()
     ax.grid(True, which='both', ls='-', alpha=0.3)
 
