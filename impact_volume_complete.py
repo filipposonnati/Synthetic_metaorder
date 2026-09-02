@@ -1,205 +1,212 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-
 import os
-from os import listdir
-import shutil
-from pathlib import Path
-
-# Code to verify the square root impact law
-
-plt.rcParams.update({
-    'font.size': 12,          # Dimensione base per tutto il testo
-    'axes.titlesize': 20,     # Titolo
-    'axes.labelsize': 16,     # Etichette assi
-    'xtick.labelsize': 12,    # Numeri asse X
-    'ytick.labelsize': 12,    # Numeri asse Y
-    'legend.fontsize': 14     # Legenda
-})
+from scipy.optimize import curve_fit
 
 # ==========================================
-# CARTELLA DI OUTPUT PER LE IMMAGINI
+# PLOT STYLING CONFIGURATION
+# ==========================================
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.titlesize': 18,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 11
+})
+
+# Modello lineare per la scala logaritmica
+def linear_model(log_x, slope, intercept):
+    return slope * log_x + intercept
+
+# ==========================================
+# OUTPUT & DATA LOADING
 # ==========================================
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-meta_tot = pd.DataFrame()
-dir = 'database\\meta'
-
+dir_path = os.path.join('database', 'meta')
 nb_traders = 20
 kind = 'power'
 exponent = 2.0
 
-print(nb_traders, kind, exponent)
-
 if kind == 'uniform':
-    path = 'meta_' + str(nb_traders) + '_' + kind + '.csv'
+    file_name = f'meta_{nb_traders}_{kind}.csv'
 else:
-    path = 'meta_' + str(nb_traders) + '_' + kind + '_' + str(exponent) + '.csv'
+    file_name = f'meta_{nb_traders}_{kind}_{exponent}.csv'
 
+data_path = os.path.join(dir_path, file_name)
 synthetic_meta = pd.read_csv(
-    f'{dir}\\{path}',
+    data_path,
     sep=',',
     parse_dates=['BeginTime', 'EndTime']
 )
 
+# ==========================================
+# DEFINE RANGES & PLOT SETUP
+# ==========================================
+ranges_config = [
+    {'min_val': 1,  'op': '>',  'max_val': 20, 'label': r'$n > 1$',    'marker': 'o', 'color': 'tab:blue'},
+    {'min_val': 5,  'op': '>=', 'max_val': 20, 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
+    {'min_val': 10, 'op': '>=', 'max_val': 20, 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
+]
 
-def run_analysis(synthetic_meta, min_nb_child, max_nb_child=20, comparison_operator='>'):
-    """
-    Esegue l'intera analisi (filtraggio, binning stratificato, binning globale,
-    plot) per una data soglia minima su NbChild.
+plt.figure(figsize=(10, 7))
 
-    comparison_operator: '>' oppure '>=' per decidere come applicare min_nb_child
-    """
+all_x_min = []
+all_x_max = []
 
-    # 1. Preparazione e Filtraggio
+# Loop over each range, bin the data, compute log-log fit, and plot
+for cfg in ranges_config:
     df_res = synthetic_meta[['MetaVolume', 'DailyVolume', 'TradedVolume', 'NbChild', 'MetaImpact']].copy()
 
-    if comparison_operator == '>':
-        df_res = df_res[df_res['NbChild'] > min_nb_child]
+    if cfg['op'] == '>':
+        df_res = df_res[df_res['NbChild'] > cfg['min_val']]
     else:
-        df_res = df_res[df_res['NbChild'] >= min_nb_child]
+        df_res = df_res[df_res['NbChild'] >= cfg['min_val']]
 
-    df_res = df_res[df_res['NbChild'] <= max_nb_child]
+    df_res = df_res[df_res['NbChild'] <= cfg['max_val']]
 
     if df_res.empty:
-        print(f"Nessun dato disponibile per la soglia NbChild {comparison_operator} {min_nb_child}. Analisi saltata.")
-        return
+        continue
 
-    maximum = np.max(df_res['NbChild'].unique())
-    minimum = np.min(df_res['NbChild'].unique())
+    # Global logarithmic binning for the range
+    min_vol = df_res['MetaVolume'].min()
+    max_vol = df_res['MetaVolume'].max()
+    bins = np.logspace(np.log10(min_vol), np.log10(max_vol), 51)
 
-    binned_data_list = []
+    df_res['bin'] = pd.cut(df_res['MetaVolume'], bins=bins, include_lowest=True)
 
-    # Iteriamo su ogni valore unico di NbChild
-    for nb_child_val in sorted(df_res['NbChild'].unique()):
-        subset = df_res[df_res['NbChild'] == nb_child_val].copy()
-
-        # Se abbiamo abbastanza dati per questo NbChild, creiamo i bin
-        if len(subset) > 50:  # Soglia minima di campioni per NbChild
-            min_vol = subset['MetaVolume'].min()
-            max_vol = subset['MetaVolume'].max()
-
-            bins = np.logspace(np.log10(min_vol), np.log10(max_vol), 31)
-            subset['bin'] = pd.cut(subset['MetaVolume'], bins=bins, include_lowest=True)
-
-            grouped = subset.groupby('bin', observed=True).agg({
-                'MetaVolume': ['mean', 'std'],
-                'MetaImpact': ['mean', 'std', 'count']
-            }).dropna()
-
-            # Appiattiamo le colonne rinominandole per comodità
-            grouped.columns = ['MetaVolume_mean', 'MetaVolume_std', 'MetaImpact_mean', 'MetaImpact_std', 'sample_count']
-
-            max_samples = grouped['sample_count'].max()
-            grouped = grouped[grouped['sample_count'] > 0.5 * max_samples]
-
-            # Aggiungiamo NbChild per il fit
-            grouped['NbChild'] = nb_child_val
-            binned_data_list.append(grouped)
-
-    if not binned_data_list:
-        print(f"Dati insufficienti per creare i bin con soglia NbChild {comparison_operator} {min_nb_child}. Analisi saltata.")
-        return
-
-    # Consolidamento dati stratificati per NbChild
-    final_binned_df = pd.concat(binned_data_list)
-    final_binned_df['y_err'] = final_binned_df['MetaImpact_std'] / np.sqrt(final_binned_df['sample_count'])
-    final_binned_df['x_err'] = final_binned_df['MetaVolume_std'] / np.sqrt(final_binned_df['sample_count'])
-
-    # ==========================================
-    # BINNING DEI DATI COMPLESSIVI
-    # ==========================================
-    min_vol_global = df_res['MetaVolume'].min()
-    max_vol_global = df_res['MetaVolume'].max()
-    bins_global = np.logspace(np.log10(min_vol_global), np.log10(max_vol_global), 31)
-
-    df_global = df_res.copy()
-    df_global['bin'] = pd.cut(df_global['MetaVolume'], bins=bins_global, include_lowest=True)
-
-    global_grouped = df_global.groupby('bin', observed=True).agg({
-        'MetaVolume': ['mean', 'std'],
-        'MetaImpact': ['mean', 'std', 'count']
+    # 1. Aggregate ALL bins
+    grouped_all = df_res.groupby('bin', observed=True).agg({
+        'MetaVolume': ['mean', 'std', 'count'],
+        'MetaImpact': ['mean', 'std']
     }).dropna()
 
-    global_grouped.columns = ['MetaVolume_mean', 'MetaVolume_std', 'MetaImpact_mean', 'MetaImpact_std', 'sample_count']
-    max_samples_global = global_grouped['sample_count'].max()
-    global_grouped = global_grouped[global_grouped['sample_count'] > 0.5 * max_samples_global]
-    # ==========================================
+    grouped_all.columns = [
+        'MetaVolume_mean', 'MetaVolume_std', 'sample_count',
+        'MetaImpact_mean', 'MetaImpact_std'
+    ]
 
-    plt.figure(figsize=(12, 8))
+    if grouped_all.empty:
+        continue
 
-    unique_nb = np.arange(minimum, maximum + 1)
-    colors = plt.get_cmap('tab20')
+    # Extract all binned points for plotting
+    x_data_all = grouped_all['MetaVolume_mean'].values
+    y_data_all = grouped_all['MetaImpact_mean'].values
 
-    for i, nb_val in enumerate(unique_nb):
-        subset_plot = final_binned_df[final_binned_df['NbChild'] == nb_val]
+    all_x_min.append(np.min(x_data_all))
+    all_x_max.append(np.max(x_data_all))
 
-        if not subset_plot.empty:
-            current_color = colors(i % 20)
-
-            plt.plot(
-                subset_plot['MetaVolume_mean'],
-                subset_plot['MetaImpact_mean'],
-                marker='.',
-                markersize=6,
-                label=f'{nb_val}',
-                color=current_color
-            )
-
-    # PLOT DEL BINNING COMPLESSIVO (Linee nere tratteggiate con marker quadrati)
+    # Plot ALL binned data points
     plt.plot(
-        global_grouped['MetaVolume_mean'],
-        global_grouped['MetaImpact_mean'],
-        linestyle='--',
-        marker='s',
-        markersize=5,
-        color='black',
-        linewidth=2,
-        label='Total'
+        x_data_all,
+        y_data_all,
+        linestyle='',
+        marker=cfg['marker'],
+        markersize=6,
+        color=cfg['color'],
+        label=f"Data {cfg['label']}"
     )
 
-    # 2. Plot del fit con linea continua più spessa
-    x_range = np.logspace(np.log10(np.min(global_grouped['MetaVolume_mean']) / 2), np.log10(np.max(global_grouped['MetaVolume_mean']) * 2), 100)
-    y_theoretical = x_range**0.5
+    # 2. Filter for HIGH-FREQUENCY bins only (used exclusively for fitting)
+    max_samples = grouped_all['sample_count'].max()
+    grouped_high_freq = grouped_all[grouped_all['sample_count'] > 0.5 * max_samples].copy()
 
-    plt.plot(x_range, y_theoretical, linestyle='-', color='b', lw=2, label='$\sqrt{Q}$')
+    if not grouped_high_freq.empty and len(grouped_high_freq) > 2:
+        x_fit_data = grouped_high_freq['MetaVolume_mean'].values
+        y_fit_data = grouped_high_freq['MetaImpact_mean'].values
 
-    # Raffinatezze estetiche
-    plt.xscale('log')
-    plt.yscale('log')
+        x_std = grouped_high_freq['MetaVolume_std'].values
+        y_std = grouped_high_freq['MetaImpact_std'].values
+        counts = grouped_high_freq['sample_count'].values
 
-    # LaTeX per le etichette degli assi
-    plt.xlabel(r'$Q$')
-    plt.ylabel(r'$I$')
+        # Incertezza della media (Standard Error of Mean = std / sqrt(N))
+        x_sem = np.where(counts > 1, x_std / np.sqrt(counts), 1e-8)
+        y_sem = np.where(counts > 1, y_std / np.sqrt(counts), 1e-8)
 
-    plt.title(f'NbChild {comparison_operator} {min_nb_child}')
+        # Trasformazione nello spazio logaritmico
+        log_x = np.log10(x_fit_data)
+        log_y = np.log10(y_fit_data)
 
-    # Legenda posizionata fuori o in un angolo pulito
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True)
+        # Incertezza propagata in log10: d(log10(z)) = dz / (z * ln(10))
+        sigma_log_x = x_sem / (x_fit_data * np.log(10))
+        sigma_log_y = y_sem / (y_fit_data * np.log(10))
 
-    plt.grid(True, which="both", ls="-", alpha=0.2)
-    plt.tight_layout()
+        # Evita errori zero o negativi
+        sigma_log_x = np.maximum(sigma_log_x, 1e-6)
+        sigma_log_y = np.maximum(sigma_log_y, 1e-6)
 
-    filename = f'impact_volume_complete_nbchild_{comparison_operator.replace(">", "gt").replace("=", "e")}_{min_nb_child}.png'
-    filepath = os.path.join(output_dir, filename)
-    plt.savefig(filepath)
-    print(f'Salvata immagine: {filepath}')
+        # Passaggio 1: Fit preliminare per stimare il coefficiente angolare (slope)
+        p0_fit, _ = curve_fit(linear_model, log_x, log_y, sigma=sigma_log_y, absolute_sigma=True)
+        slope_approx = p0_fit[0]
 
-    #plt.show()
-    plt.close()
+        # Passaggio 2: Calcolo Errore Efficace nello spazio logaritmico
+        sigma_eff_log = np.sqrt(sigma_log_y**2 + (slope_approx * sigma_log_x)**2)
 
+        # Passaggio 3: Fit finale con curve_fit usando gli errori efficaci
+        popt, pcov = curve_fit(
+            linear_model,
+            log_x,
+            log_y,
+            sigma=sigma_eff_log,
+            absolute_sigma=True
+        )
+
+        slope, intercept = popt
+        # Errore sui parametri di best fit (deviazione standard = radice dei valori diagonali della matrice di covarianza)
+        perr = np.sqrt(np.diag(pcov))
+        slope_err, intercept_err = perr[0], perr[1]
+
+        # Stampa a schermo degli errori sui parametri
+        print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f}")
+
+        # Grid per tracciare il fit
+        x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
+        y_fit = (10**intercept) * (x_fit**slope)
+
+        # Plot linea di fit
+        plt.plot(
+            x_fit,
+            y_fit,
+            linestyle='--',
+            linewidth=1.8,
+            color=cfg['color'],
+            label=f"Fit {cfg['label']}: ${slope:.3f} \pm {slope_err:.3f}$"
+        )
 
 # ==========================================
-# ESECUZIONE DELL'ANALISI PER LE VARIE SOGLIE
+# THEORETICAL CURVE (Q^0.5)
 # ==========================================
+if all_x_min and all_x_max:
+    global_x_min = min(all_x_min) / 2
+    global_x_max = max(all_x_max) * 2
+    x_ref = np.logspace(np.log10(global_x_min), np.log10(global_x_max), 100)
+    y_ref = x_ref**0.5
 
-# Analisi originale: NbChild > 1
-run_analysis(synthetic_meta, min_nb_child=1, comparison_operator='>')
+    plt.plot(
+        x_ref,
+        y_ref,
+        linestyle='-',
+        color='black',
+        linewidth=1.2,
+        label=r'$\sqrt{Q}$'
+    )
 
-# Analisi con NbChild >= 5
-run_analysis(synthetic_meta, min_nb_child=5, comparison_operator='>=')
+# Formatting
+plt.xlim([10**-5, 5 * 10**-3])
+plt.ylim([10**-3, 10**-1])
 
-# Analisi con NbChild >= 10
-run_analysis(synthetic_meta, min_nb_child=10, comparison_operator='>=')
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel(r'$Q$')
+plt.ylabel(r'$I$')
+plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+plt.grid(True, which="both", ls="-", alpha=0.2)
+plt.tight_layout()
+
+filepath = os.path.join(output_dir, 'impact_volume_complete.png')
+plt.savefig(filepath, bbox_inches='tight')
+print(f'Saved single fitted figure to: {filepath}')
+plt.close()
