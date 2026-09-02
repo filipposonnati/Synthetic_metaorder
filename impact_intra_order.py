@@ -277,114 +277,111 @@ def analyse_flat(trades: pd.DataFrame, function: str, model: str, exponent: floa
     return Y, Y_err
 
 
-def analyse_by_nb_child(trades: pd.DataFrame, function: str, model: str,
-                        child_range=range(2, 12), exponent: float = 0.5):
-    """Plot I_i/Q^exponent vs Σq_i/Q for each NbChild value."""
-    print('\n── NbChild Analysis ──')
+def analyse_intra_order_trend(trades: pd.DataFrame, function: str, model: str,
+                              min_child_thresholds=None, plot_dotted_lines=None, exponent: float = 0.5):
+    """
+    Plot I_i/Q^exponent vs Σq_i/Q for multiple NbChild thresholds.
+    
+    Parameters
+    ----------
+    trades : pd.DataFrame
+        Trade data
+    function : str
+        Function name for saving
+    model : str
+        Model name
+    min_child_thresholds : list, optional
+        List of minimum child thresholds (default: [2, 5, 10])
+    plot_dotted_lines : list of bool, optional
+        Boolean mask corresponding to min_child_thresholds.
+        If True, plot the dotted fit line; if False, omit it.
+    exponent : float
+        Exponent for Q normalization
+    """
+    if min_child_thresholds is None:
+        min_child_thresholds = [2, 5, 10]
 
-    colors = plt.cm.tab10(np.linspace(0, 1, 10))
-
-    fig, ax = plt.subplots(figsize=(11, 7))
-
-    for idx, n_child in enumerate(child_range):
-        subset = trades[trades['NbChild'] == n_child].copy()
-
+    if plot_dotted_lines is None:
+        plot_dotted_lines = [True] * len(min_child_thresholds)
+    
+    print('\n── Intra-Order Trend (Multiple Thresholds) ──')
+    
+    # Define colors for each threshold
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # blue, orange, green
+    if len(min_child_thresholds) > len(colors):
+        colors = plt.cm.tab10(np.linspace(0, 1, len(min_child_thresholds)))
+    
+    fig, ax = plt.subplots(figsize=(10, 7))
+    
+    for threshold_idx, min_child in enumerate(min_child_thresholds):
+        subset = trades[trades['NbChild'] >= min_child].copy()
+        
         if len(subset) < 30:
-            print(f'  Skipping NbChild={n_child}: insufficient data ({len(subset)} samples)')
+            print(f'  Skipping threshold NbChild ≥ {min_child}: insufficient data ({len(subset)} samples)')
             continue
-
+        
+        print(f'  Threshold NbChild ≥ {min_child}: {len(subset):,} samples')
+        
         subset['Ratio']           = subset['PartialImpact'] / subset['MetaVolume']**exponent
         subset['NormalizedVolume'] = subset['PartialVolume']  / subset['MetaVolume']
-
+        
         bins    = np.linspace(0, 1, 21)
         grouped = group_by_bins(subset, 'NormalizedVolume', 'Ratio', bins)
-
+        
+        x     = grouped['x_mean'].to_numpy()
+        y     = grouped['y_mean'].to_numpy()
+        x_err = grouped['x_err'].to_numpy()
+        y_err = grouped['y_err'].to_numpy()
+        
+        # Plot binned data with error bars
         ax.errorbar(
-            grouped['x_mean'].to_numpy(),
-            grouped['y_mean'].to_numpy(),
-            xerr=grouped['x_err'].to_numpy(),
-            yerr=grouped['y_err'].to_numpy(),
-            color=colors[idx],
+            x, y,
+            xerr=x_err, yerr=y_err,
+            color=colors[threshold_idx],
             linestyle='-',
-            linewidth=1.5,
+            marker='o',
+            capsize=3,
+            markersize=6,
             alpha=0.85,
-            capsize=2,
-            label=f'n={n_child}',
+            elinewidth=1.5,
+            capthick=1.5,
+            label=f'n ≥ {min_child}',
+            zorder=3
+        )
+        
+        # Fit linear model
+        def grad(popt, x):
+            return np.full_like(x, popt[0])
+        
+        popt, _, perr = fit_iterative(linear, x, y, y_err, x_err,
+                                      x_err_gradient=grad)
+        
+        report_fit(f'n ≥ {min_child}', popt, perr, ['Y', 'C'])
+        
+        # Determine whether to draw the dotted fit line
+        should_plot_dotted = (
+            plot_dotted_lines[threshold_idx] 
+            if threshold_idx < len(plot_dotted_lines) 
+            else True
         )
 
-    ax.set_xlabel(r'$\Sigma q_i / Q$')
-    ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$')
-    ax.legend(title='n children', fontsize=8, title_fontsize=9,
-              bbox_to_anchor=(1, 1), loc='upper left')
-    ax.grid(True, ls='--', alpha=0.3)
-
-    plt.tight_layout()
-    _save(f'{function}_ratio_child', model, dpi=150, bbox_inches='tight')
-
-def analyse_linear_min_child(trades: pd.DataFrame, function: str, model: str,
-                             min_child: int = 5, exponent: float = 0.5):
-    """
-    Same as analyse_linear but restricted to metaorders with NbChild >= min_child.
-    Fits I_i/Q^exponent ~ Y·(Σq_i/Q) + C and saves the filtered ratio plot.
-    """
-    print(f'\n── Linear fit (NbChild ≥ {min_child}) ──')
-
-    df = trades[trades['NbChild'] >= min_child].copy()
-    print(f'  Rows after filter: {len(df):,}  (dropped {len(trades) - len(df):,})')
-
-    if len(df) < 30:
-        print('  Insufficient data after filter – skipping.')
-        return None, None
-
-    df['Ratio']            = df['PartialImpact'] / df['MetaVolume']**exponent
-    df['NormalizedVolume'] = df['PartialVolume']  / df['MetaVolume']
-
-    bins    = bin_linear()
-    grouped = group_by_bins(df, 'NormalizedVolume', 'Ratio', bins)
-
-    x     = grouped['x_mean'].to_numpy()
-    y     = grouped['y_mean'].to_numpy()
-    x_err = grouped['x_err'].to_numpy()
-    y_err = grouped['y_err'].to_numpy()
-
-    # No-error fit
-    popt0, _, perr0 = fit_iterative(linear, x, y, y_err)
-    report_fit('no err', popt0, perr0, ['Y', 'C'])
-
-    # y-error only
-    popt1, _, perr1 = fit_iterative(linear, x, y, y_err)
-    report_fit('y err', popt1, perr1, ['Y', 'C'])
-
-    # Effective error – ∂(Yx+C)/∂x = Y
-    def grad(popt, x):
-        return np.full_like(x, popt[0])
-
-    popt, _, perr = fit_iterative(linear, x, y, y_err, x_err,
-                                  x_err_gradient=grad)
-    report_fit('eff err', popt, perr, ['Y', 'C'])
-
-    Y, C, Y_err, C_err = popt[0], popt[1], perr[0], perr[1]
-
-    # ── Plot ──
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.errorbar(x, y, xerr=x_err, yerr=y_err,
-                linestyle='', marker='o', capsize=3, label='Binned data', zorder=3)
-
-    x_th = np.linspace(0.0, 1.0, 50)
-    ax.plot(x_th, Y * x_th + C,
-            label=r'$y = Yx + C$', linestyle=':', color='black', zorder=2)
-
-    ax.set_xlabel(r'$\Sigma q_i / Q$')
-    ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$')
-    #ax.set_title(rf'NbChild $\geq$ {min_child}')
-    ax.legend()
+        # Plot fit line (dotted) in the same color if enabled
+        if should_plot_dotted:
+            x_th = np.linspace(0.0, 1.0, 100)
+            ax.plot(x_th, popt[0] * x_th + popt[1],
+                    color=colors[threshold_idx],
+                    linestyle=':',
+                    linewidth=2.5,
+                    alpha=0.9,
+                    zorder=2)
+    
+    ax.set_xlabel(r'$\Sigma q_i / Q$', fontsize=14)
+    ax.set_ylabel(rf'$I_i / Q^{{{exponent:g}}}$', fontsize=14)
+    ax.legend(loc='best', fontsize=12, framealpha=0.95)
     ax.grid(True, which='both', ls='-', alpha=0.3)
-
+    
     plt.tight_layout()
-    _save(f'{function}_ratio_min{min_child}child', model)
-
-    return Y, C, Y_err, C_err
-
+    _save(f'{function}_intra_order', model)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # I/O helper
@@ -401,21 +398,19 @@ if __name__ == '__main__':
     function = '20_power_2.0'
     model    = ''
     exponent = 0.5  # set the exponent of Q used in I ~ Q^exponent (0.5 = square root)
+    
+    # Configure minimum child thresholds and their dotted line display mask
+    min_child_thresholds = [2, 5, 10]
+    plot_dotted_lines    = [False, False, True]  # Toggle dotted lines per threshold index
+    
     print(f'{function}  {model}  (exponent = {exponent})')
+    print(f'Min child thresholds: {min_child_thresholds}')
+    print(f'Plot dotted lines:    {plot_dotted_lines}\n')
 
     trades = load_trades(function, model)
 
-    Y_lin, C_lin, Y_lin_err, C_lin_err = analyse_linear(trades, function, model, exponent=exponent)
-
-    analyse_by_nb_child(trades, function, model, exponent=exponent)
-
-    Y_lin5, C_lin5, Y_lin5_err, C_lin5_err = analyse_linear_min_child(trades, function, model, min_child=5, exponent=exponent)
-    Y_lin10, C_lin10, Y_lin10_err, C_lin10_err = analyse_linear_min_child(trades, function, model, min_child=10, exponent=exponent)
-
-    # ── Summary (ready for a LaTeX table) ──
-    print('\n── Parameter summary ──')
-    #print(f'  Cumulative       : Y = {Y_cum:.6g} ± {Y_cum_err:.6g},  δ = {delta_cum:.6g} ± {delta_cum_err:.6g}')
-    print(f'  Linear           : Y = {Y_lin:.6g} ± {Y_lin_err:.6g},  C = {C_lin:.6g} ± {C_lin_err:.6g}')
-    print(f'  Linear ≥5ch      : Y = {Y_lin5:.6g} ± {Y_lin5_err:.6g},  C = {C_lin5:.6g} ± {C_lin5_err:.6g}')
-    print(f'  Linear ≥10ch     : Y = {Y_lin10:.6g} ± {Y_lin10_err:.6g},  C = {C_lin10:.6g} ± {C_lin10_err:.6g}')
-    #print(f'  Flat             : Y = {Y_flat:.6g} ± {Y_flat_err:.6g}')
+    # Create single consolidated plot with multiple thresholds
+    analyse_intra_order_trend(trades, function, model, 
+                              min_child_thresholds=min_child_thresholds,
+                              plot_dotted_lines=plot_dotted_lines,
+                              exponent=exponent)
