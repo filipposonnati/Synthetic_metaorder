@@ -34,10 +34,10 @@ for index, configuration in configurations.iterrows():
 
     if nb_traders == 1:
         filename = f'meta_{nb_traders}.csv'
-    elif kind == 'power':
-        filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
-    else:
+    elif kind == 'uniform':
         filename = f'meta_{nb_traders}_{kind}.csv'
+    else:
+        filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
 
     if os.path.exists(f'{meta_dir}\\' + filename):
         os.remove(f'{meta_dir}\\' + filename)

@@ -28,7 +28,7 @@ os.makedirs(output_dir, exist_ok=True)
 
 dir_path = os.path.join('database', 'meta')
 nb_traders = 20
-kind = 'power'
+kind = 'powerscipy'
 exponent = 2.0
 
 if kind == 'uniform':
@@ -206,7 +206,7 @@ plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
 plt.grid(True, which="both", ls="-", alpha=0.2)
 plt.tight_layout()
 
-filepath = os.path.join(output_dir, 'impact_volume_complete.png')
+filepath = os.path.join(output_dir, file_name + '.png')
 plt.savefig(filepath, bbox_inches='tight')
 print(f'Saved single fitted figure to: {filepath}')
 plt.close()
