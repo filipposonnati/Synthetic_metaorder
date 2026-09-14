@@ -61,26 +61,28 @@ def make_density_overlay(z, results, out_path, n_bins_lin=60, n_bins_log=40):
     fig, (ax_lin, ax_log) = plt.subplots(1, 2, figsize=(14, 5.5))
 
     # Pannello sinistro: Corpo della distribuzione
-    x_body = np.quantile(z, 0.99)
-    ax_lin.hist(z[z <= x_body], bins=n_bins_lin, density=True, alpha=0.35, color="grey", label="Empirico")
+    x_body = np.quantile(z, 0.9)
+    ax_lin.hist(z[z <= x_body], bins=n_bins_lin, density=True, alpha=0.35, color="grey", label="Empirical")
     xs_body = np.linspace(1e-6, x_body, 2000)
     for r in ok_results:
-        ax_lin.plot(xs_body, CANDIDATES[r["name"]].pdf(xs_body, *r["params"]), linewidth=1.8, label=f"{r['name']} (AIC:{r['aic']:.0f})")
+        ax_lin.plot(xs_body, CANDIDATES[r["name"]].pdf(xs_body, *r["params"]), linewidth=1.8, label=f"{r['name']} (AIC {r['aic']:.2f})")
     ax_lin.set_xlim(0, x_body)
-    ax_lin.set_title("Corpo della Distribuzione (Scala Lineare)")
+    ax_lin.set_ylim(0, 5)
+    ax_lin.set_title("Linear Scale")
     ax_lin.legend(fontsize=8)
+
 
     # Pannello destro: Coda (Log-Log)
     x_max = np.quantile(z, 0.999)
     z_min_pos = max(z.min(), x_max * 1e-4)
     log_bins = np.logspace(np.log10(z_min_pos), np.log10(x_max), n_bins_log)
-    ax_log.hist(z[(z >= z_min_pos) & (z <= x_max)], bins=log_bins, density=True, alpha=0.35, color="grey", label="Empirico")
+    ax_log.hist(z[(z >= z_min_pos) & (z <= x_max)], bins=log_bins, density=True, alpha=0.35, color="grey", label="Empirical")
     xs_tail = np.logspace(np.log10(z_min_pos), np.log10(x_max), 2000)
     for r in ok_results:
         ax_log.plot(xs_tail, CANDIDATES[r["name"]].pdf(xs_tail, *r["params"]), linewidth=1.8, label=f"{r['name']}")
     ax_log.set_xscale("log")
     ax_log.set_yscale("log")
-    ax_log.set_title("Intera Distribuzione e Coda (Log-Log)")
+    ax_log.set_title("Log-Log scale")
     ax_log.legend(fontsize=8)
 
     fig.tight_layout()
@@ -136,7 +138,7 @@ def main():
 
     # Generazione dei grafici utili
     make_density_overlay(z, results, out_dir / "density.png")
-    make_acf_diagnostic(z, out_dir / "residuals_acf.png")
+    #make_acf_diagnostic(z, out_dir / "residuals_acf.png")
 
 if __name__ == "__main__":
     main()

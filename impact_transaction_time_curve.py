@@ -390,7 +390,7 @@ plt.plot(x_th, post_impact_model(x_th, a_fit, beta_fit),
 plt.errorbar(t_centers, Y_values, yerr=Y_err_values,
              linestyle='', marker='o', color='C0', label=r'$Y(t/T)$')
 
-plt.xlabel(r'$t / T$ (transactions)')
+plt.xlabel(r'$t / T$')
 plt.ylabel(rf'$I / Q^{{{power_exp}}}$')
 plt.legend()
 plt.grid(True, which='both', ls='-')

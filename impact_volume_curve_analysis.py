@@ -15,31 +15,64 @@ plt.rcParams.update({
     'legend.fontsize': 14
 })
 
-def power_law(x, Y, delta):
-    return Y * x**delta
+def linear_model(log_x, slope, intercept):
+    """Modello lineare per la scala logaritmica."""
+    return slope * log_x + intercept
 
-def robust_power_law_fit(x, y, x_err, y_err, sample_count):
+def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
     """
-    Performs an iterative power-law fit on the 'core' high-density data.
+    Performs the exact 3-pass linear log-log fit with effective variance propagation
+    as implemented in impact_volume_complete.py.
     """
-    core_mask = sample_count > (0.5 * sample_count.max())
-    xc, yc = x[core_mask], y[core_mask]
-    xerr_c, yerr_c = x_err[core_mask], y_err[core_mask]
-
-    if len(xc) < 2:
+    if len(x_fit_data) <= 2:
         return None
 
     try:
-        popt, _ = curve_fit(power_law, xc, yc, maxfev=5000)
-        Y, delta = popt
+        # Incertezza della media (Standard Error of Mean = std / sqrt(N))
+        x_sem = np.where(counts > 1, x_std / np.sqrt(counts), 1e-8)
+        y_sem = np.where(counts > 1, y_std / np.sqrt(counts), 1e-8)
 
-        for _ in range(10):
-            eff_err = np.sqrt(yerr_c**2 + (Y * delta * xc**(delta - 1) * xerr_c)**2)
-            popt, pcov = curve_fit(power_law, xc, yc, sigma=eff_err, absolute_sigma=True, maxfev=5000)
-            Y, delta = popt
+        # Trasformazione nello spazio logaritmico
+        log_x = np.log10(x_fit_data)
+        log_y = np.log10(y_fit_data)
 
-        return Y, delta, np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1])
-    except:
+        # Incertezza propagata in log10: d(log10(z)) = dz / (z * ln(10))
+        sigma_log_x = x_sem / (x_fit_data * np.log(10))
+        sigma_log_y = y_sem / (y_fit_data * np.log(10))
+
+        # Evita errori zero o negativi
+        sigma_log_x = np.maximum(sigma_log_x, 1e-6)
+        sigma_log_y = np.maximum(sigma_log_y, 1e-6)
+
+        # Passaggio 1: Fit preliminare per stimare il coefficiente angolare (slope)
+        p0_fit, _ = curve_fit(linear_model, log_x, log_y, sigma=sigma_log_y, absolute_sigma=True)
+        slope_approx = p0_fit[0]
+
+        # Passaggio 2: Calcolo Errore Efficace nello spazio logaritmico
+        sigma_eff_log = np.sqrt(sigma_log_y**2 + (slope_approx * sigma_log_x)**2)
+
+        # Passaggio 3: Fit finale con curve_fit usando gli errori efficaci
+        popt, pcov = curve_fit(
+            linear_model,
+            log_x,
+            log_y,
+            sigma=sigma_eff_log,
+            absolute_sigma=True
+        )
+
+        slope, intercept = popt
+        perr = np.sqrt(np.diag(pcov))
+        slope_err, intercept_err = perr[0], perr[1]
+
+        # Back-transform parameters to physical power-law terms
+        delta = slope
+        delta_err = slope_err
+        
+        Y = 10**intercept
+        Y_err = np.log(10) * Y * intercept_err
+
+        return Y, delta, Y_err, delta_err
+    except Exception:
         return None
 
 def bin_data(df, n_bins=51):
@@ -53,22 +86,23 @@ def bin_data(df, n_bins=51):
     df['bin'] = pd.cut(df['MetaVolume'], bins=bins, include_lowest=True)
 
     grouped = df.groupby('bin', observed=True).agg({
-        'MetaVolume': ['mean', 'std'],
-        'MetaImpact': ['mean', 'std', 'count']
+        'MetaVolume': ['mean', 'std', 'count'],
+        'MetaImpact': ['mean', 'std']
     }).dropna()
 
-    grouped.columns = ['x', 'x_std', 'y', 'y_std', 'count']
-    grouped['x_err'] = grouped['x_std'] / np.sqrt(grouped['count'])
-    grouped['y_err'] = grouped['y_std'] / np.sqrt(grouped['count'])
+    grouped.columns = [
+        'MetaVolume_mean', 'MetaVolume_std', 'sample_count',
+        'MetaImpact_mean', 'MetaImpact_std'
+    ]
 
     return grouped, bins
 
-def load_model_data(model, file_name_con_estensione):
+def load_model_data(model, file_name_con_estensione, min_child=2):
     """Load and clean data for a given model ('' means real data)."""
     folder_prefix = f"meta_{model}" if model else "meta"
-    path = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
+    path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}")
     data = pd.read_csv(path)
-    return data[data['NbChild'] > 1].copy()
+    return data[data['NbChild'] >= min_child].copy()
 
 def model_display_name(model):
     """Human-readable label for a model string."""
@@ -82,11 +116,19 @@ def plot_aggregate_impact(df, image_name, n_bins=51):
         return
     grouped, bins = res
 
-    fit = robust_power_law_fit(
-        grouped['x'], grouped['y'],
-        grouped['x_err'], grouped['y_err'],
-        grouped['count']
-    )
+    # Filter high-frequency bins for fitting (exact condition from impact_volume_complete.py)
+    max_samples = grouped['sample_count'].max()
+    grouped_high_freq = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
+
+    fit = None
+    if not grouped_high_freq.empty and len(grouped_high_freq) > 2:
+        fit = robust_power_law_fit(
+            grouped_high_freq['MetaVolume_mean'].values,
+            grouped_high_freq['MetaImpact_mean'].values,
+            grouped_high_freq['MetaVolume_std'].values,
+            grouped_high_freq['MetaImpact_std'].values,
+            grouped_high_freq['sample_count'].values
+        )
 
     fig, ax1 = plt.subplots(figsize=(8, 6))
     ax2 = ax1.twinx()
@@ -97,52 +139,37 @@ def plot_aggregate_impact(df, image_name, n_bins=51):
     ax2.set_ylabel('Frequency')
 
     ax2.hist(df['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
+
+    # Pre-calculate SEM for exact plotting of uncertainties
+    x_sem = np.where(grouped['sample_count'] > 1, grouped['MetaVolume_std'] / np.sqrt(grouped['sample_count']), 1e-8)
+    y_sem = np.where(grouped['sample_count'] > 1, grouped['MetaImpact_std'] / np.sqrt(grouped['sample_count']), 1e-8)
+
     ax1.errorbar(
-        grouped['x'], grouped['y'],
-        xerr=grouped['x_err'], yerr=grouped['y_err'],
+        grouped['MetaVolume_mean'], grouped['MetaImpact_mean'],
+        xerr=x_sem, yerr=y_sem,
         marker='o', linestyle='', color='C0', label='Binned data'
     )
 
     if fit:
         Y, delta, Y_err, delta_err = fit
         x_line = np.logspace(
-            np.log10(grouped['x'].min()),
-            np.log10(grouped['x'].max()), 100
+            np.log10(grouped_high_freq['MetaVolume_mean'].min()),
+            np.log10(grouped_high_freq['MetaVolume_mean'].max()), 100
         )
         fit_label = rf'$Y={Y:.2e} \pm {Y_err:.2e},\ \delta={delta:.3f} \pm {delta_err:.3f}$'
-        ax1.plot(x_line, power_law(x_line, Y, delta), 'k--', label=fit_label)
+        ax1.plot(x_line, Y * (x_line**delta), 'k--', label=fit_label)
         print(f"Aggregate Fit: Y={Y:.4e} ± {Y_err:.4e}, delta={delta:.4f} ± {delta_err:.4f}")
 
     ax1.legend(loc='upper left', fontsize=10)
     ax1.grid(True, which='major', linewidth=1.0, alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f'images\\{image_name}.png', dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join('images', f'{image_name}.png'), dpi=150, bbox_inches='tight')
     plt.close()
 
 
 def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
                               n_bins=51, vertical_shift=10.0):
-    """
-    Comparison plot: datasets sorted by fitted delta (ascending), then stacked
-    vertically with a multiplicative shift so slopes can be compared without
-    overlap. Top of the ladder = lowest delta, bottom = highest delta.
-
-    Parameters
-    ----------
-    file_name_con_estensione : str
-        CSV filename (e.g. '20_power_2.0.csv').
-    models : list[str]
-        Models to compare. Use '' for real data (no model prefix).
-    image_name : str
-        Output image path (without 'images\\' prefix or extension).
-    n_bins : int
-        Number of log-spaced bins.
-    vertical_shift : float
-        Multiplicative spacing between successive datasets in log space.
-        Each dataset i is multiplied by vertical_shift^(n-1-i) so that
-        rank 0 (lowest delta) sits highest on the plot.
-    """
-    # ── Pass 1: load, bin, fit every model ───────────────────────────────────
+    """Comparison plot with datasets shifted vertically."""
     records = []
 
     for model in models:
@@ -162,29 +189,36 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
             continue
         grouped, _ = res
 
+        max_samples = grouped['sample_count'].max()
+        grouped_high_freq = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
+
+        if grouped_high_freq.empty or len(grouped_high_freq) <= 2:
+            print(f"[{label_base}] Not enough high frequency bins, skipping.")
+            continue
+
         fit = robust_power_law_fit(
-            grouped['x'], grouped['y'],
-            grouped['x_err'], grouped['y_err'],
-            grouped['count']
+            grouped_high_freq['MetaVolume_mean'].values,
+            grouped_high_freq['MetaImpact_mean'].values,
+            grouped_high_freq['MetaVolume_std'].values,
+            grouped_high_freq['MetaImpact_std'].values,
+            grouped_high_freq['sample_count'].values
         )
+
         if fit is None:
             print(f"[{label_base}] Fit failed, skipping.")
             continue
 
-        records.append(dict(model=model, label=label_base, grouped=grouped, fit=fit))
+        records.append(dict(model=model, label=label_base, grouped=grouped, grouped_fit=grouped_high_freq, fit=fit))
 
     if not records:
         print("[ERROR] No models could be fitted; aborting comparison plot.")
         return
 
-    # ── Sort ascending by delta ───────────────────────────────────────────────
-    records.sort(key=lambda r: r['fit'][1])  # fit[1] == delta
+    # Sort ascending by delta
+    records.sort(key=lambda r: r['fit'][1])
     n = len(records)
-
-    # ── Assign colours in sorted order (tab10) ───────────────────────────────
     palette = cm.tab10(np.linspace(0, 1, max(n, 1)))
 
-    # ── Pass 2: plot ─────────────────────────────────────────────────────────
     fig, ax1 = plt.subplots(figsize=(10, 7))
     ax1.set_xscale("log")
     ax1.set_yscale("log")
@@ -196,33 +230,28 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     print("-" * 50)
 
     for rank, (rec, color) in enumerate(zip(records, palette)):
-        # rank 0 (lowest delta) → top of plot → largest shift exponent
         shift_exp = n - 1 - rank
         shift = vertical_shift ** shift_exp
         grouped = rec['grouped']
+        grouped_fit = rec['grouped_fit']
         Y, delta, Y_err, delta_err = rec['fit']
         label_base = rec['label']
 
         print(f"{rank:>5}  {label_base:<20}  {delta:>7.3f}  ×{shift:>7.2f}")
 
-        # Shifted scatter
         ax1.plot(
-            grouped['x'], grouped['y'] * shift,
+            grouped['MetaVolume_mean'], grouped['MetaImpact_mean'] * shift,
             marker='o', linestyle='', color=color, alpha=0.7, markersize=4
         )
 
-        # Shifted fit line clipped to model's own x-range
         x_line = np.logspace(
-            np.log10(grouped['x'].min()),
-            np.log10(grouped['x'].max()), 200
+            np.log10(grouped_fit['MetaVolume_mean'].min()),
+            np.log10(grouped_fit['MetaVolume_mean'].max()), 200
         )
-        if shift_exp != 0:
-            shift_str = rf" ($\times {vertical_shift:.0f}^{{{shift_exp}}}$)"
-        else:
-            shift_str = ""
+        shift_str = rf" ($\times {vertical_shift:.0f}^{{{shift_exp}}}$)" if shift_exp != 0 else ""
         fit_label = rf"{label_base}: $\delta={delta:.3f} \pm {delta_err:.3f}$" + shift_str
         ax1.plot(
-            x_line, power_law(x_line, Y * shift, delta),
+            x_line, (Y * shift) * (x_line**delta),
             linestyle='--', linewidth=1.8, color=color,
             label=fit_label, solid_capstyle='butt'
         )
@@ -232,43 +261,30 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     ax1.legend(loc='lower right', fontsize=10)
     ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f'images\\{image_name}.png', dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join('images', f'{image_name}.png'), dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"Comparison plot saved: images\\{image_name}.png")
-
-def load_model_data(model, file_name_con_estensione, min_child=2):
-    """Load and clean data for a given model ('' means real data)."""
-    folder_prefix = f"meta_{model}" if model else "meta"
-    path = f"database\\{folder_prefix}\\meta_{file_name_con_estensione}"
-    data = pd.read_csv(path)
-    return data[data['NbChild'] >= min_child].copy()
+    print(f"Comparison plot saved: {os.path.join('images', f'{image_name}.png')}")
 
 
 if __name__ == "__main__":
-    # ── Configurazione File ──────────────────────────────────────────────────
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    # Modelli da analizzare
-    models = ['', 'ar_1000', 'var_1000', 'delta_0.2_1000', 'delta_0.5_1000', 'delta_0.8_1000', 'lmf_tim_sqrt', 'lmf_tim_lin']
+    models = ['', 'ar_1000', 'var_1000', 'delta_0.5_1000', 'lmf_1.5_50_mem_tim_sqrt', 'lmf_1.5_50_mem_tim_lin']
 
-    # Conserviamo il riferimento originale della funzione prima di applicare modifiche dinamiche
     _orig_load_model_data = load_model_data
 
-    target_dir = "impact_volume_curve_analysis_ge3"
-    min_child = 3
+    target_dir = "impact_volume_curve_analysis_10"
+    min_child = 10
 
     print("\n" + "="*70)
-    print(f"AVVIO ANALISI: {target_dir.upper()} (NbChild >= {min_child})")
+    print(f"AVVIO ANALISI: {target_dir.upper()} (n >= {min_child})")
     print("="*70)
 
-    # 1. Crea la cartella se non esiste
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    # 2. Sovrascriviamo temporaneamente il comportamento di default della funzione di load
     load_model_data = lambda m, f: _orig_load_model_data(m, f, min_child=min_child)
 
-    # 3. Generazione del grafico di confronto (Comparison Plot)
     img_comparison = f"{target_dir}/{function_clean}_comparison"
     print(f"\n[GENERAZIONE] Grafico di confronto complessivo: images/{img_comparison}.png")
     plot_aggregate_comparison(
@@ -278,7 +294,6 @@ if __name__ == "__main__":
         vertical_shift=10.0,
     )
 
-    # 4. Generazione dei singoli grafici per modello
     for model in models:
         label = model_display_name(model)
         img_prefix = f"{model + '_' if model else ''}"
@@ -291,6 +306,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f" └─ [{label}] ERRORE: {e}")
 
-    # Ripristina la funzione originale al termine dello script per sicurezza
     load_model_data = _orig_load_model_data
     print("\n[FINISH] Tutte le analisi sono state completate con successo.")

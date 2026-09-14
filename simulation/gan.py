@@ -533,7 +533,7 @@ if __name__ == "__main__":
     # False -> modalità di produzione: usa l'ultimo checkpoint disponibile,
     #          allena ulteriormente sul pool completo e genera i dati
     #          sintetici per ogni giorno.
-    TRAINING_MODE = True
+    TRAINING_MODE = False
 
     # 'stride' controlla quante sequenze sovrapposte vengono create per ogni
     # giorno durante il pooling. stride=1 usa tutte le sequenze possibili
@@ -548,7 +548,7 @@ if __name__ == "__main__":
             review_dir='..\\database\\review',
             seq_length=100,
             latent_dim=10,
-            epochs_per_round=1,  # quante epoche in più ad ogni rilancio dello script
+            epochs_per_round=2,  # quante epoche in più ad ogni rilancio dello script
             stride=STRIDE
         )
     else:

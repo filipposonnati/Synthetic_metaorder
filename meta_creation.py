@@ -7,7 +7,9 @@ import os
 from os import listdir
 import methods
 
-model = ""
+#model = "lmf_1.5_50_mem_tim_4"
+model = 'var_1000'
+iterations = 10  # Added iterations variable with default value of 10
 
 data_dir = 'database\\data'
 
@@ -23,32 +25,42 @@ if not os.path.exists(meta_dir):
 
 paths = np.array(listdir(data_dir))
 
-configurations = pd.read_csv(f"configurations.csv", header=0)
+#configurations = pd.read_csv(f"configurations.csv", header=0)
 
-for index, configuration in configurations.iterrows():
-    nb_traders = configuration['nb_traders']
-    kind = configuration['kind']
-    exponent = configuration['exponent']
+#for index, configuration in configurations.iterrows():
+#nb_traders = configuration['nb_traders']
+#kind = configuration['kind']
+#exponent = configuration['exponent']
 
-    print(nb_traders, kind, exponent)
+nb_traders = 20
+kind = 'power'
+exponent = 2.0
 
-    if nb_traders == 1:
-        filename = f'meta_{nb_traders}.csv'
-    elif kind == 'uniform':
-        filename = f'meta_{nb_traders}_{kind}.csv'
-    else:
-        filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
+if nb_traders == 1:
+    filename = f'meta_{nb_traders}.csv'
+elif kind == 'uniform':
+    filename = f'meta_{nb_traders}_{kind}.csv'
+else:
+    filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
 
-    if os.path.exists(f'{meta_dir}\\' + filename):
-        os.remove(f'{meta_dir}\\' + filename)
+file_path = os.path.join(meta_dir, filename)
 
-    l = 0
-    first = True
+# Skip configuration if the target file already exists
+if os.path.exists(file_path):
+    print(f"Skipping configuration ({nb_traders}, {kind}, {exponent}) — {filename} already exists.")
+    exit()
 
-    for path in paths:
-        print(path)
+print(nb_traders, kind, exponent)
+
+l = 0
+first = True
+
+for path in paths:
+    print(path)
+    # Loop for the specified number of iterations per path/day
+    for it in range(iterations):
         meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
         l += len(meta)
 
-        meta.to_csv(f'{meta_dir}\\' + filename, mode='a', index=False, header=first)
+        meta.to_csv(file_path, mode='a', index=False, header=first)
         first = False

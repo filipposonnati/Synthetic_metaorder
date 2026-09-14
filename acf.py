@@ -128,6 +128,7 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
     # Grafico a dispersione dei punti binnati e ripuliti dal rumore
     ax.plot(bin_centers, binned_acf, color='black', alpha=1.0, linestyle='-', marker = 'o', label='Pooled ACF')
 
+    """
     # Curva di fit calcolata sui dati binnati (mostrata sull'intervallo di fit)
     ax.plot(
         bin_centers[valid_binned],
@@ -143,6 +144,7 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
         color='purple', lw=2, ls=':',
         label=rf'DFA prediction  $\gamma_{{DFA}}$={gamma_dfa:.3f}'
     )
+    """
 
     ax.set_xscale('log')
     ax.set_yscale('log')

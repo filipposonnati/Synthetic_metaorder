@@ -26,17 +26,24 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-dir_path = os.path.join('database', 'meta')
+model = "lmf_1.5_50_mem_tim_sqrt"
+#model = 'delta_0.5_1000'
+
+dir = 'meta'
+if model != "":
+    dir = dir + "_" + model
+
+dir_path = os.path.join('database', dir)
 nb_traders = 20
-kind = 'powerscipy'
+kind = 'power'
 exponent = 2.0
 
 if kind == 'uniform':
-    file_name = f'meta_{nb_traders}_{kind}.csv'
+    conf = f'{nb_traders}_{kind}'
 else:
-    file_name = f'meta_{nb_traders}_{kind}_{exponent}.csv'
+    conf = f'{nb_traders}_{kind}_{exponent}'
 
-data_path = os.path.join(dir_path, file_name)
+data_path = os.path.join(dir_path, 'meta_' + conf + '.csv')
 synthetic_meta = pd.read_csv(
     data_path,
     sep=',',
@@ -47,9 +54,9 @@ synthetic_meta = pd.read_csv(
 # DEFINE RANGES & PLOT SETUP
 # ==========================================
 ranges_config = [
-    {'min_val': 1,  'op': '>',  'max_val': 20, 'label': r'$n > 1$',    'marker': 'o', 'color': 'tab:blue'},
-    {'min_val': 5,  'op': '>=', 'max_val': 20, 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
-    {'min_val': 10, 'op': '>=', 'max_val': 20, 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
+    {'min_val': 1,  'op': '>', 'label': r'$n > 1$',    'marker': 'o', 'color': 'tab:blue'},
+    {'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
+    {'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
 ]
 
 plt.figure(figsize=(10, 7))
@@ -66,7 +73,7 @@ for cfg in ranges_config:
     else:
         df_res = df_res[df_res['NbChild'] >= cfg['min_val']]
 
-    df_res = df_res[df_res['NbChild'] <= cfg['max_val']]
+    #df_res = df_res[df_res['NbChild'] <= cfg['max_val']]
 
     if df_res.empty:
         continue
@@ -196,7 +203,7 @@ if all_x_min and all_x_max:
 
 # Formatting
 plt.xlim([10**-5, 5 * 10**-3])
-plt.ylim([10**-3, 10**-1])
+#plt.ylim([10**-3, 10**-1])
 
 plt.xscale('log')
 plt.yscale('log')
@@ -205,8 +212,10 @@ plt.ylabel(r'$I$')
 plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
 plt.grid(True, which="both", ls="-", alpha=0.2)
 plt.tight_layout()
-
-filepath = os.path.join(output_dir, file_name + '.png')
+if model == '':
+    filepath = os.path.join(output_dir, conf + '.png')
+else:
+    filepath = os.path.join(output_dir, model + '_' + conf + '.png')
 plt.savefig(filepath, bbox_inches='tight')
 print(f'Saved single fitted figure to: {filepath}')
 plt.close()

@@ -138,21 +138,19 @@ def pooled_dfa(series_list, n_vals=None):
 
     # ── DFA diagnostic plot ──────────────────────────────────────────────────
     plt.figure()
-    plt.loglog(n_vals, F_n, 'bo-', label='Pooled F(n)')
+    plt.loglog(n_vals, F_n, label='Pooled F(n)', marker='o')
     plt.loglog(
         n_vals[mask],
         10 ** intercept * n_vals[mask] ** alpha,
-        'r--',
-        label=f'Fit  α={alpha:.3f}  R²={r_squared:.3f}'
+        label=f'Fit  α={alpha:.3f}',
     )
-    plt.xlabel('Window size (n)')
-    plt.ylabel('Fluctuation F(n)')
-    plt.title('Pooled DFA')
+    plt.xlabel('n')
+    plt.ylabel('F(n)')
     plt.legend()
     plt.grid(True, which="both", ls="--")
     plt.tight_layout()
     os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
-    plt.savefig(os.path.join('images', 'acf', 'dfa_check.png'), dpi=150)
+    plt.savefig(os.path.join('images', 'acf', 'dfa.png'), dpi=150)
     plt.close()
 
     return alpha, n_vals[mask], F_n[mask]
@@ -251,7 +249,7 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
 if __name__ == '__main__':
     data_dir = os.path.join('database', 'data')
     paths    = listdir(data_dir)
-    max_lag  = 1_000
+    max_lag  = 5_000
 
     all_signs       = []
     all_daily_corrs = []
@@ -262,34 +260,8 @@ if __name__ == '__main__':
         all_signs.append(signs)
         all_daily_corrs.append(acf(signs, nlags=max_lag, fft=True))
 
-    # ── Pooled ACF (compute once, then cache) ────────────────────────────────
-    cache_path = Path("database/acf_binary.npy")
-    if cache_path.is_file():
-        pooled = np.load(cache_path)
-        print("Loaded cached pooled ACF.")
-    else:
-        print("Computing pooled ACF …")
-        pooled = pooled_acf(all_signs, nlags=max_lag)
-        np.save(cache_path, pooled)
-        print("Saved pooled ACF to cache.")
-
     # ── DFA ──────────────────────────────────────────────────────────────────
     alpha, scales, fluctuations = pooled_dfa(all_signs)
     gamma_dfa = 2 - 2 * alpha
     print(f"\nPooled DFA exponent  α      : {alpha:.4f}")
     print(f"Predicted ACF tail exponent : {gamma_dfa:.4f}")
-
-    # ── Plot ─────────────────────────────────────────────────────────────────
-    plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag)
-
-    # ── Save auxiliary outputs for downstream scripts ─────────────────────────
-    all_signs_concat = np.concatenate(all_signs)
-
-    p_plus = float(np.mean(all_signs_concat > 0))
-    np.save('database/p_plus.npy', np.array(p_plus))
-    print(f"\nEmpirical p(+1) = {p_plus:.4f}")
-
-    median_len = int(np.median([len(s) for s in all_signs]))
-    np.save('database/median_len.npy', np.array(median_len))
-
-    print("\nSaved: database/acf_binary.npy, database/p_plus.npy, database/median_len.npy")

@@ -195,7 +195,7 @@ if __name__ == '__main__':
 
     # Generate binary sequences matching the original ACF
     N_REAL  = 250
-    N_recon = max(median_len, 1000 * max_lag)
+    N_recon = max(median_len, 200 * max_lag)
     print(f"Generating {N_REAL} binary sequences (N={N_recon} each)...")
     binary_signals, acf_gauss_target = generate_binary_sequence(
         pooled, p_plus=p_plus, N=N_recon, n_realizations=N_REAL, seed=42

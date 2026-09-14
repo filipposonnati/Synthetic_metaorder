@@ -219,47 +219,60 @@ def _mem_negloglik(theta, v, p, q, m):
     nll = float(np.sum(np.log(mu_eff) + v_eff / mu_eff))
     return nll if np.isfinite(nll) else 1e10
 
-
 def _fit_burr12_dist(z_hat):
     """
     Stima i parametri c e d della Burr XII imponendo E[z] = 1.
-    Dato che E[z] = d * B(1 + 1/c, d - 1/c), fissiamo il fattore di scala d
-    analiticamente e ottimizziamo rispetto a c (con c > 1 e d > 1/c).
     """
+    z2_mean = float(np.mean(z_hat**2))
+
     def obj(c_val):
-        if c_val <= 1.001: return 1e10
-        # Calcolo del d teorico per avere media = 1 partendo dalla varianza campionaria
-        # E[z^2] = d * B(1 + 2/c, d - 2/c)
-        # Ottimizzazione semplificata accoppiando momento secondo e vincolo della media
-        z2_mean = np.mean(z_hat**2)
+        # Assicuriamo che c_val sia uno scalare float
+        c_scalar = float(np.squeeze(c_val))
+        if c_scalar <= 1.001:
+            return 1e10
         
         def inner_obj(d_val):
-            if d_val <= 2.0 / c_val: return 1e10
-            mean_theo = d_val * special.beta(1.0 + 1.0/c_val, d_val - 1.0/c_val)
-            m2_theo = d_val * special.beta(1.0 + 2.0/c_val, d_val - 2.0/c_val)
-            # Normalizziamo la scala affinché la media sia 1
-            scale_adj = 1.0 / mean_theo
-            m2_adj = m2_theo * (scale_adj**2)
-            return (m2_adj - z2_mean)**2
+            d_scalar = float(np.squeeze(d_val))
+            if d_scalar <= 2.0 / c_scalar:
+                return 1e10
+            try:
+                mean_theo = d_scalar * special.beta(1.0 + 1.0 / c_scalar, d_scalar - 1.0 / c_scalar)
+                m2_theo = d_scalar * special.beta(1.0 + 2.0 / c_scalar, d_scalar - 2.0 / c_scalar)
+                if not (np.isfinite(mean_theo) and np.isfinite(m2_theo)) or mean_theo <= 0:
+                    return 1e10
+                scale_adj = 1.0 / mean_theo
+                m2_adj = m2_theo * (scale_adj**2)
+                return float((m2_adj - z2_mean)**2)
+            except Exception:
+                return 1e10
             
-        res_d = minimize(inner_obj, [2.0 * c_val + 1.0], method='Nelder-Mead', bounds=[(2.0/c_val + 0.01, None)])
+        x0_d = float(2.0 * c_scalar + 1.0)
+        bounds_d = [(2.0 / c_scalar + 0.01, None)]
+        res_d = minimize(inner_obj, [x0_d], method='Nelder-Mead', bounds=bounds_d)
         return float(res_d.fun)
 
     res_c = minimize(obj, [3.0], method='Nelder-Mead', bounds=[(1.01, None)])
     c = max(float(res_c.x[0]), 1.01)
     
-    # Ricalcola il d ottimale finale
+    # Ricalcola d ottimale finale
     def final_d_obj(d_val):
-        if d_val <= 2.0 / c: return 1e10
-        mean_theo = d_val * special.beta(1.0 + 1.0/c, d_val - 1.0/c)
-        m2_theo = d_val * special.beta(1.0 + 2.0/c, d_val - 2.0/c)
-        scale_adj = 1.0 / mean_theo
-        return ((m2_theo * scale_adj**2) - np.mean(z_hat**2))**2
+        d_scalar = float(np.squeeze(d_val))
+        if d_scalar <= 2.0 / c:
+            return 1e10
+        try:
+            mean_theo = d_scalar * special.beta(1.0 + 1.0 / c, d_scalar - 1.0 / c)
+            m2_theo = d_scalar * special.beta(1.0 + 2.0 / c, d_scalar - 2.0 / c)
+            if not (np.isfinite(mean_theo) and np.isfinite(m2_theo)) or mean_theo <= 0:
+                return 1e10
+            scale_adj = 1.0 / mean_theo
+            return float(((m2_theo * scale_adj**2) - z2_mean)**2)
+        except Exception:
+            return 1e10
         
-    res_d_final = minimize(final_d_obj, [2.0 * c + 1.0], method='Nelder-Mead')
+    x0_final_d = float(2.0 * c + 1.0)
+    res_d_final = minimize(final_d_obj, [x0_final_d], method='Nelder-Mead', bounds=[(2.0 / c + 0.01, None)])
     d = max(float(res_d_final.x[0]), 2.0 / c + 0.01)
     return c, d
-
 
 def fit_mem_acd(volumes, p=1, q=1, dist='inverse_gaussian'):
     """
@@ -470,10 +483,10 @@ def run(data_dir  = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir     = r"..\database\data",
-        out_dir      = r"..\database\data_lmf_1.5_50_log_ar_tim_sqrt",
+        out_dir      = r"..\database\data_lmf_1.5_50_mem_tim_sqrt",
         alpha        = 1.5,
         n_traders    = 50,
-        volume_model = 'log_ar', # 'mem_acd' | 'log_ar'
+        volume_model = 'mem_acd', # 'mem_acd' | 'log_ar'
         mem_dist     = 'burr12',  # 'inverse_gaussian' | 'lognormal' | 'burr12'
         mem_p        = 1,
         mem_q        = 1,
