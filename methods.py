@@ -4,6 +4,7 @@ import pandas as pd
 import random, datetime
 from scipy.stats import powerlaw as sp_powerlaw, pareto as sp_pareto, chisquare, kstest
 from os import listdir
+import re
 
 """
 UNIFIED METHODS MODULE
@@ -56,9 +57,14 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
     trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
     t = np.array(trades[0])
 
-    year = path[5:9]
-    month = path[10:12]
-    day = path[13:15]
+    date_match = re.search(r'(\d{4})[-_]?(\d{2})[-_]?(\d{2})', path)
+
+    if date_match:
+        year, month, day = date_match.groups()
+        date_string = f"{year}-{month}-{day}"
+    else:
+        # Fallback default date if no YYYY-MM-DD pattern exists in filename
+        date_string = "2020-01-01"
 
     date_string = f"{year}-{month}-{day}"
     start_of_day_dt = pd.to_datetime(date_string)

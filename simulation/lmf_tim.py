@@ -28,10 +28,21 @@ PIPELINE
 
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from os import listdir
 from scipy.optimize import minimize
 import scipy.special as special
+
+import sys
+from pathlib import Path
+
+# Ottiene la cartella genitore (1 livello sopra)
+parent_dir = Path(__file__).resolve().parent.parent
+
+# Aggiunge il percorso a sys.path
+sys.path.append(str(parent_dir))
+
+# Ora puoi importare lo script o il modulo
+from lmf import simulate_lmf, simulate_lmf_lambda
 
 
 # ---------------------------------------------------------------------------
@@ -67,38 +78,6 @@ def save_simulated_data(out_path, prices, volumes, signs, n_trades):
         2: np.abs(volumes),
         3: np.sign(signs).astype(int),
     }).to_csv(out_path, index=False, header=False)
-
-
-# ---------------------------------------------------------------------------
-# LAYER 1 — SEGNI  (Long Memory Flow)
-# ---------------------------------------------------------------------------
-
-def simulate_lmf(alpha, n_traders, total_steps, rng):
-    """
-    Serie binaria epsilon_t in {-1, +1} a memoria lunga.
-    """
-    state = np.zeros((n_traders, 2), dtype=np.int64)  # [side, remaining]
-
-    def _new():
-        return rng.choice([1, -1]), int(rng.pareto(alpha) + 1)
-
-    for i in range(n_traders):
-        state[i, 0], state[i, 1] = _new()
-
-    signs = np.empty(total_steps, dtype=np.int8)
-
-    for t in range(total_steps):
-        idx             = rng.integers(0, n_traders)
-        side, remaining = state[idx]
-        signs[t]        = side
-        remaining      -= 1
-        if remaining <= 0:
-            state[idx, 0], state[idx, 1] = _new()
-        else:
-            state[idx, 1] = remaining
-
-    return signs
-
 
 # ---------------------------------------------------------------------------
 # LAYER 2 — VOLUMI  (AR(p) sui log-volumi reali)
@@ -411,9 +390,14 @@ def simulate_tim(signs, volumes, beta, delta, sigma_f, sigma_eta, kernel_L, P0, 
 # PIPELINE GIORNALIERA
 # ---------------------------------------------------------------------------
 
-def simulate_day(n_trades, vol_params, volume_model, alpha, n_traders, beta,
+def simulate_day(n_trades, vol_params, volume_model, alpha, n_traders, lambda_lmf, beta,
                  delta, sigma_f, sigma_eta, kernel_L, P0, rng):
-    signs = simulate_lmf(alpha, n_traders, n_trades, rng)
+    if n_traders != None:
+        signs = simulate_lmf(alpha, n_traders, n_trades)
+    elif lambda_lmf != None:
+        signs, _, _ = simulate_lmf_lambda(alpha, lambda_lmf, n_trades)
+    else:
+        exit()
 
     if volume_model == 'mem_acd':
         volumes = simulate_mem_acd(vol_params, n_trades, rng)
@@ -435,13 +419,14 @@ def simulate_day(n_trades, vol_params, volume_model, alpha, n_traders, beta,
 def run(data_dir  = r"..\database\data",
         out_dir   = r"..\database\data_synthetic",
         alpha     = 1.5,
-        n_traders = 10,
+        n_traders = None,
+        lambda_lmf = None,
         volume_model = 'mem_acd',
-        mem_dist  = 'inverse_gaussian',  # <--- NUOVO PARAMETRO CORRENTE: 'inverse_gaussian', 'lognormal', 'burr12'
+        mem_dist  = 'burr12',  # 'inverse_gaussian', 'lognormal', 'burr12'
         mem_p     = 1,
         mem_q     = 1,
         ar_order  = 100,
-        beta      = 0.3,
+        beta      = 0.25,
         delta     = 0.5,
         kernel_L  = 500,
         seed      = 42):
@@ -471,7 +456,7 @@ def run(data_dir  = r"..\database\data",
 
         prices, volumes, signs = simulate_day(
             n_trades=n_trades, vol_params=vol_params, volume_model=volume_model,
-            alpha=alpha, n_traders=n_traders, beta=beta, delta=delta,
+            alpha=alpha, n_traders=n_traders, lambda_lmf=lambda_lmf, beta=beta, delta=delta,
             sigma_f=sigma_f, sigma_eta=sigma_eta, kernel_L=kernel_L, P0=P0, rng=rng
         )
 
@@ -483,10 +468,11 @@ def run(data_dir  = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir     = r"..\database\data",
-        out_dir      = r"..\database\data_lmf_1.5_50_mem_tim_sqrt",
-        alpha        = 1.5,
-        n_traders    = 50,
-        volume_model = 'mem_acd', # 'mem_acd' | 'log_ar'
+        out_dir      = r"..\database\data_lmf_1.8_0.3_log_ar_tim_sqrt",
+        alpha        = 1.8,
+        n_traders    = None,
+        lambda_lmf   = 0.3,
+        volume_model = 'log_ar', # 'mem_acd' | 'log_ar'
         mem_dist     = 'burr12',  # 'inverse_gaussian' | 'lognormal' | 'burr12'
         mem_p        = 1,
         mem_q        = 1,

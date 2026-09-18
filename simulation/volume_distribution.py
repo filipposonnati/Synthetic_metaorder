@@ -61,11 +61,11 @@ def make_density_overlay(z, results, out_path, n_bins_lin=60, n_bins_log=40):
     fig, (ax_lin, ax_log) = plt.subplots(1, 2, figsize=(14, 5.5))
 
     # Pannello sinistro: Corpo della distribuzione
-    x_body = np.quantile(z, 0.9)
+    x_body = np.quantile(z, 0.75)
     ax_lin.hist(z[z <= x_body], bins=n_bins_lin, density=True, alpha=0.35, color="grey", label="Empirical")
     xs_body = np.linspace(1e-6, x_body, 2000)
     for r in ok_results:
-        ax_lin.plot(xs_body, CANDIDATES[r["name"]].pdf(xs_body, *r["params"]), linewidth=1.8, label=f"{r['name']} (AIC {r['aic']:.2f})")
+        ax_lin.plot(xs_body, CANDIDATES[r["name"]].pdf(xs_body, *r["params"]), linewidth=1.8, label=f"{r['name']} (AIC {r['aic']:.2e})")
     ax_lin.set_xlim(0, x_body)
     ax_lin.set_ylim(0, 5)
     ax_lin.set_title("Linear Scale")
@@ -121,7 +121,7 @@ def make_acf_diagnostic(z, out_path, nlags=40):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="../database/data")
-    ap.add_argument("--p", type=int, default=1)
+    ap.add_argument("--p", type=int, default=2)
     ap.add_argument("--q", type=int, default=1)
     ap.add_argument("--max-days", type=int, default=100)
     args = ap.parse_args()

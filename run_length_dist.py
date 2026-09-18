@@ -172,18 +172,18 @@ if __name__ == "__main__":
     #lmf_signs = simulate_lmf(1.5, 4, 10_000_000)
     #lmf_rld_4 = compute_run_length_distribution(lmf_signs)
 
+    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.5, 0.3, 10_000_000)
+    lmf_rld_lambda_15_03 = compute_run_length_distribution(lmf_signs_lambda)
+
     lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.8, 0.2, 10_000_000)
     lmf_rld_lambda_18_02 = compute_run_length_distribution(lmf_signs_lambda)
-
-    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.6, 0.3, 10_000_000)
-    lmf_rld_lambda_16_03 = compute_run_length_distribution(lmf_signs_lambda)
 
     lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.8, 0.3, 10_000_000)
     lmf_rld_lambda_18_03 = compute_run_length_distribution(lmf_signs_lambda)
 
     # Calling the method once handles plotting and saving both configurations with aligned ratio graphs
     plot_run_length_distributions(
-        distributions=[rld, gaussian_rld, lmf_rld_lambda_18_02, lmf_rld_lambda_16_03, lmf_rld_lambda_18_03],
-        labels=["Real Data", "Gaussian", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.8", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.6", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.8"],
+        distributions=[rld, gaussian_rld, lmf_rld_lambda_18_02, lmf_rld_lambda_15_03, lmf_rld_lambda_18_03],
+        labels=["Real Data", "Gaussian", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.8", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.5", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.8"],
         log_scale='both'
     )

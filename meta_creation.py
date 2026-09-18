@@ -7,9 +7,10 @@ import os
 from os import listdir
 import methods
 
-#model = "lmf_1.5_50_mem_tim_4"
-model = 'var_1000'
-iterations = 10  # Added iterations variable with default value of 10
+model = "lmf_1.8_0.3_log_ar_tim_sqrt"
+#model = ''
+iterations = 50  # Added iterations variable with default value of 10
+n_filter = 10
 
 data_dir = 'database\\data'
 
@@ -37,11 +38,16 @@ kind = 'power'
 exponent = 2.0
 
 if nb_traders == 1:
-    filename = f'meta_{nb_traders}.csv'
+    filename = f'meta_{nb_traders}'
 elif kind == 'uniform':
-    filename = f'meta_{nb_traders}_{kind}.csv'
+    filename = f'meta_{nb_traders}_{kind}'
 else:
-    filename = f'meta_{nb_traders}_{kind}_{exponent}.csv'
+    filename = f'meta_{nb_traders}_{kind}_{exponent}'
+
+if n_filter > 2:
+    filename = filename + f'_{n_filter}'
+
+filename = filename + '.csv'
 
 file_path = os.path.join(meta_dir, filename)
 
@@ -60,6 +66,7 @@ for path in paths:
     # Loop for the specified number of iterations per path/day
     for it in range(iterations):
         meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
+        meta = meta[meta['NbChild'] >= n_filter]
         l += len(meta)
 
         meta.to_csv(file_path, mode='a', index=False, header=first)

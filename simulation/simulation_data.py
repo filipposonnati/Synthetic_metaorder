@@ -27,7 +27,7 @@ paths = np.array(listdir('..\\database\\data'))
 
 p = 1000
 
-name = f'delta_0.5_1000'
+name = f'delta_0.3_1000'
 
 dir = 'database\\data_' + name
 
@@ -49,7 +49,7 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p]  # Prezzo reale al punto p
 
-    results = delta_fit_fixed(r, v, delta=0.5, p = p)
+    results = delta_fit_fixed(r, v, delta=0.3, p = p)
 
     prices_sim, volumes_sim, r_sim = simulate_delta_fixed(
         results,

@@ -100,7 +100,10 @@ def bin_data(df, n_bins=51):
 def load_model_data(model, file_name_con_estensione, min_child=2):
     """Load and clean data for a given model ('' means real data)."""
     folder_prefix = f"meta_{model}" if model else "meta"
-    path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}")
+    if os.path.exists(os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}_{min_child}")):
+        path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}_{min_child}")
+    else:
+        path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}")
     data = pd.read_csv(path)
     return data[data['NbChild'] >= min_child].copy()
 
@@ -258,7 +261,7 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
 
     print("-" * 50)
 
-    ax1.legend(loc='lower right', fontsize=10)
+    ax1.legend(loc='upper left', fontsize=10, bbox_to_anchor=(1.02, 1))
     ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
     plt.tight_layout()
     plt.savefig(os.path.join('images', f'{image_name}.png'), dpi=150, bbox_inches='tight')
@@ -270,20 +273,20 @@ if __name__ == "__main__":
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    models = ['', 'ar_1000', 'var_1000', 'delta_0.5_1000', 'lmf_1.5_50_mem_tim_sqrt', 'lmf_1.5_50_mem_tim_lin']
+    models = ['', 'ar_1000', 'var_1000', 'delta_0.5_1000', 'lmf_1.8_0.3_mem_tim_sqrt']
 
     _orig_load_model_data = load_model_data
 
-    target_dir = "impact_volume_curve_analysis_10"
-    min_child = 10
+    target_dir = "impact_volume_curve_analysis"
+    min_child = 2
 
     print("\n" + "="*70)
-    print(f"AVVIO ANALISI: {target_dir.upper()} (n >= {min_child})")
+    print(f"AVVIO ANALISI: {target_dir} (n >= {min_child})")
     print("="*70)
 
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    load_model_data = lambda m, f: _orig_load_model_data(m, f, min_child=min_child)
+    load_model_data = lambda m, f, mc=min_child: _orig_load_model_data(m, f, min_child=min_child)
 
     img_comparison = f"{target_dir}/{function_clean}_comparison"
     print(f"\n[GENERAZIONE] Grafico di confronto complessivo: images/{img_comparison}.png")
@@ -294,13 +297,15 @@ if __name__ == "__main__":
         vertical_shift=10.0,
     )
 
+    exit()
+
     for model in models:
         label = model_display_name(model)
         img_prefix = f"{model + '_' if model else ''}"
         nome_img_aggregato = f"{target_dir}/{img_prefix}{function_clean}"
 
         try:
-            df_clean = load_model_data(model, file_name_con_estensione)
+            df_clean = load_model_data(model, file_name_con_estensione, min_child)
             print(f" └─ [{label}] Generazione plot individuale: images/{nome_img_aggregato}.png")
             plot_aggregate_impact(df_clean, nome_img_aggregato)
         except Exception as e:

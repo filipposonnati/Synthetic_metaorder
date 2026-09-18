@@ -26,8 +26,8 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-model = "lmf_1.5_50_mem_tim_sqrt"
-#model = 'delta_0.5_1000'
+model = "lmf_1.8_0.3_log_ar_tim_sqrt"
+#model = 'gan'
 
 dir = 'meta'
 if model != "":
@@ -43,12 +43,7 @@ if kind == 'uniform':
 else:
     conf = f'{nb_traders}_{kind}_{exponent}'
 
-data_path = os.path.join(dir_path, 'meta_' + conf + '.csv')
-synthetic_meta = pd.read_csv(
-    data_path,
-    sep=',',
-    parse_dates=['BeginTime', 'EndTime']
-)
+path = 'meta_' + conf
 
 # ==========================================
 # DEFINE RANGES & PLOT SETUP
@@ -66,6 +61,18 @@ all_x_max = []
 
 # Loop over each range, bin the data, compute log-log fit, and plot
 for cfg in ranges_config:
+    if os.path.exists(os.path.join(dir_path, path + '_' + str(cfg['min_val']) + '.csv')):
+        data_path = os.path.join(dir_path, path + '_' + str(cfg['min_val']) + '.csv')
+    else:
+        data_path = os.path.join(dir_path, path + '.csv')
+    synthetic_meta = pd.read_csv(
+        data_path,
+        sep=',',
+        parse_dates=['BeginTime', 'EndTime']
+    )
+
+    synthetic_meta = synthetic_meta[synthetic_meta['MetaVolume'] > 0]
+
     df_res = synthetic_meta[['MetaVolume', 'DailyVolume', 'TradedVolume', 'NbChild', 'MetaImpact']].copy()
 
     if cfg['op'] == '>':
@@ -94,6 +101,11 @@ for cfg in ranges_config:
     grouped_all.columns = [
         'MetaVolume_mean', 'MetaVolume_std', 'sample_count',
         'MetaImpact_mean', 'MetaImpact_std'
+    ]
+
+    grouped_all = grouped_all[
+        (grouped_all['MetaVolume_mean'] > 0) & 
+        (grouped_all['MetaImpact_mean'] > 0)
     ]
 
     if grouped_all.empty:
@@ -202,7 +214,7 @@ if all_x_min and all_x_max:
     )
 
 # Formatting
-plt.xlim([10**-5, 5 * 10**-3])
+#plt.xlim([10**-5, 5 * 10**-3])
 #plt.ylim([10**-3, 10**-1])
 
 plt.xscale('log')

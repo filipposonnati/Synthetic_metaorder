@@ -142,7 +142,7 @@ def pooled_dfa(series_list, n_vals=None):
     plt.loglog(
         n_vals[mask],
         10 ** intercept * n_vals[mask] ** alpha,
-        label=f'Fit  α={alpha:.3f}',
+        label=rf'Fit  $\alpha = {alpha:.3f} \pm {std_err:.3f}$',
     )
     plt.xlabel('n')
     plt.ylabel('F(n)')

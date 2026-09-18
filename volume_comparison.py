@@ -246,11 +246,12 @@ if __name__ == "__main__":
     # =========================================================================
     # CONFIGURAZIONE GENERALE: QUI MODIFICHI IL VALORE DI N
     # =========================================================================
-    N_FILES = 3  # Quanti file estrarre a caso e UNIRE da ciascuna cartella (Real, AR, MEM)
+    N_FILES = 10  # Quanti file estrarre a caso e UNIRE da ciascuna cartella (Real, AR, MEM)
 
     dati = {}
     intraday_flags = {}
-    
+
+    """
     # 1. Caricamento del file fisso di REVIEW (singolo e specifico)
     path_review_fisso = "database/review/review_20260708_153517.csv"
     if os.path.exists(path_review_fisso):
@@ -262,6 +263,7 @@ if __name__ == "__main__":
             print(f"Errore nel caricamento del file di review: {e}")
     else:
         print(f"Attenzione: File di review '{path_review_fisso}' non trovato.")
+    """
 
     # 2. Struttura delle cartelle esplicite da cui estrarre N file e unirli
     STRUTTURA_CARTELLE = {
@@ -273,9 +275,13 @@ if __name__ == "__main__":
             "cartella": "database/data_ar_1000",
             "includi_intraday": False,
         },
-        "MEM lognormal": {
-            "cartella": r"database\data_lmf_1.5_50_mem_lognormal_tim_sqrt", # Preservato raw string originale
+        "MEM burr12": {
+            "cartella": r"database\data_lmf_1.5_50_mem_tim_sqrt", # Preservato raw string originale
             "includi_intraday": False,
+        },
+        "log AR": {
+                "cartella": r"database\data_lmf_1.5_50_log_ar_tim_sqrt", # Preservato raw string originale
+                "includi_intraday": False,
         },
     }
 

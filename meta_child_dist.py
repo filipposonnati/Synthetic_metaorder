@@ -390,7 +390,7 @@ def compare_all_distributions_grid(base_dir: Path, real_subdir: str,
 
         # Configure subplots, labels, and corrected CCDF LaTeX syntax
         for ax, ylabel, col_title in [
-            (ax_pdf,  f'{stem}\nP(x)', f'PDF'),
+            (ax_pdf,  f'{stem.replace("_", " ")}\nP(x)', f'PDF'),
             (ax_ccdf, r'$P(X \geq x)$',  f'CCDF'),
         ]:
             ax.set_xscale('log')
@@ -565,10 +565,10 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
             ax.set_xscale('log')
             ax.set_yscale('log')
             ax.set_xlabel('x')
-            ax.set_ylabel(ylabel)
+            #ax.set_ylabel(ylabel.replace("_", " "))
             ax.grid(True, linewidth=0.4, linestyle='--', alpha=0.6)
-            if row == 0:
-                ax.set_title(col_title)
+            #if row == 0:
+            #    ax.set_title(col_title)
 
         ax_pdf.set_ylabel('P(x)')
 
@@ -619,7 +619,7 @@ def compare_all_distributions(base_dir: Path, real_subdir: str,
     out_path = os.path.join('images', out_fname)
     fig.savefig(out_path, dpi=300)
     print(f"[save]  {out_path}")
-    plt.show()
+    plt.close()
 
 
 # ---------------------------------------------------------------------------
