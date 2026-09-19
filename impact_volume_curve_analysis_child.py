@@ -152,7 +152,7 @@ def plot_stratified_impact(df, image_name, plot_range, n_bins=51):
 
 if __name__ == "__main__":
     model = ''
-    file_name_con_estensione = '20_powerscipy_2.0.csv'
+    file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
     folder_prefix = f"meta_tail_{model}" if model else "meta_tail"
@@ -195,6 +195,7 @@ if __name__ == "__main__":
         ax1.set_ylabel('Y')
         ax1.set_xticks(x_data)
         ax1.set_xlim(1.5, max(x_data) + 0.5)
+        ax1.set_ylim(0.0, min([1.0, max(res_df['Y'])]))
         ax1.tick_params(axis='x', rotation=45)
         ax1.grid(True, linestyle='--', alpha=0.7)
         ax1.legend()
@@ -206,6 +207,7 @@ if __name__ == "__main__":
         ax2.set_ylabel(r'$\delta$')
         ax2.set_xticks(x_data)
         ax2.set_xlim(1.5, max(x_data) + 0.5)
+        ax1.set_ylim(0.0, min([1.0, max(res_df['delta'])]))
         ax2.tick_params(axis='x', rotation=45)
         ax2.grid(True, linestyle='--', alpha=0.7)
         ax2.legend()

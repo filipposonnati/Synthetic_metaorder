@@ -26,8 +26,9 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-model = "lmf_1.8_0.3_log_ar_tim_sqrt"
-#model = 'gan'
+#model = "lmf_1.8_0.3_log_ar_tim_sqrt"
+#model = "lmf_1.8_0.3_real_no_param_returns"
+model = 'real_reg'
 
 dir = 'meta'
 if model != "":

@@ -2,19 +2,62 @@ import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.tsa.stattools import acf
 from scipy.optimize import curve_fit
+from scipy import stats
 import warnings
+
+def sample_metaorder_length(dist_type='pareto', alpha=1.5, **kwargs):
+    """
+    Genera la lunghezza L del metaordine in base alla distribuzione scelta.
+    Garantisce sempre L >= 1.
+    """
+    dist_type = dist_type.lower()
+    
+    if dist_type == 'pareto':
+        # Default: Pareto continua campionata e floorata a int
+        return int(np.random.pareto(alpha) + 1)
+    
+    elif dist_type in ['zeta', 'zipf']:
+        # Zeta / Zipf discreta pura: P(k) ~ k^-alpha
+        return int(np.random.zipf(alpha))
+    
+    elif dist_type == 'yule':
+        # Yule-Simon: asintoticamente k^-(alpha + 1), richiede parametro rho = alpha
+        rho = kwargs.get('rho', alpha)
+        return int(stats.yulesimon.rvs(rho))
+    
+    elif dist_type in ['logarithmic', 'logser']:
+        # Logaritmica: p deve essere compreso tra 0 e 1 (default 0.8)
+        p = kwargs.get('p', 0.8)
+        return int(stats.logser.rvs(p))
+    
+    elif dist_type == 'lomax':
+        # Lomax discreta (Pareto tipo II): P(k) ~ (1 + k/scale)^-alpha
+        scale = kwargs.get('scale', 1.0)
+        return int(np.floor(stats.lomax.rvs(alpha, scale=scale))) + 1
+    
+    elif dist_type in ['nbinom', 'negative_binomial']:
+        # Binomiale Negativa traslata (+1) per supporto L >= 1
+        n_param = kwargs.get('r', 1)
+        p_param = kwargs.get('p', 0.1)
+        return int(np.random.negative_binomial(n_param, p_param)) + 1
+    
+    else:
+        raise ValueError(f"Distribuzione '{dist_type}' non supportata.")
 
 def power_law(x, constant, alpha):
     return constant * x**alpha
 
-def simulate_lmf(alpha, n_traders, total_steps, p_plus = 0.5):
+def simulate_lmf(alpha, n_traders, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None):
     """
     Advanced simulation: pool of traders with overlapping metaorders.
     """
+    if dist_kwargs is None:
+        dist_kwargs = {}
+
     trader_state = np.zeros((n_traders, 2), dtype=int)
     
     def get_new_metaorder():
-        length = int(np.random.pareto(alpha) + 1)
+        length = sample_metaorder_length(dist_type=dist_type, alpha=alpha, **dist_kwargs)
         side = np.sign(np.random.rand() - (1 - p_plus))
         return side, length
 
@@ -35,18 +78,24 @@ def simulate_lmf(alpha, n_traders, total_steps, p_plus = 0.5):
             
     return order_flow
 
-def simulate_lmf_lambda(alpha, lam, total_steps, p_plus = 0.5):
+def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None):
     """
     λ-model simulation di Lillo, Mike & Farmer (2005) con tracciamento dei metaordini.
     
     Parameters
     ----------
     alpha : float
-        Esponente di coda della distribuzione di Pareto dei metaordini (> 1).
+        Esponente di coda della distribuzione dei metaordini (> 1).
     lam : float
         Probabilità di arrivo di un nuovo metaordine per timestep (0 < lam < 1).
     total_steps : int
         Numero di step temporali della simulazione.
+    p_plus : float
+        Probabilità che il metaordine sia di acquisto (+1).
+    dist_type : str
+        Distribuzione dei metaordini (default 'pareto'). Opzioni: 'pareto', 'zeta', 'yule', 'logarithmic', 'lomax', 'nbinom'.
+    dist_kwargs : dict or None
+        Parametri aggiuntivi per la distribuzione scelta.
         
     Returns
     -------
@@ -56,19 +105,16 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus = 0.5):
         Numero di ordini attivi nel pool per ogni istante t.
     storico_metaordini : list of dict
         Registro di tutti i metaordini completati durante la simulazione.
-        Ogni dizionario contiene:
-          - 'id': identificativo univoco dell'ordine.
-          - 'lunghezza_iniziale': numero di esecuzioni necessarie alla nascita (L).
-          - 'step_creazione': l'istante t in cui l'ordine è entrato nel pool.
-          - 'step_completamento': l'istante t in cui l'ordine è stato esaurito.
-          - 'lifetime_effettivo': durata totale dell'ordine in passi di clock globali.
     """
-    if alpha <= 1:
+    if dist_kwargs is None:
+        dist_kwargs = {}
+
+    if alpha <= 1 and dist_type == 'pareto':
         raise ValueError("alpha deve essere > 1 affinché la media di Pareto sia finita.")
     if not (0 < lam < 1):
         raise ValueError("lam deve essere compreso nell'intervallo aperto (0, 1).")
  
-    lam_c = (alpha - 1) / alpha
+    lam_c = (alpha - 1) / alpha if alpha > 1 else 0.5
     if lam >= lam_c:
         warnings.warn(
             f"lam={lam:.4f} >= lam_c={lam_c:.4f} (valore critico per alpha={alpha}). "
@@ -80,7 +126,7 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus = 0.5):
 
     def new_hidden_order():
         nonlocal id_counter
-        length = int(np.random.pareto(alpha) + 1)
+        length = sample_metaorder_length(dist_type=dist_type, alpha=alpha, **dist_kwargs)
         side = np.sign(np.random.rand() - (1 - p_plus))
         # Struttura: [segno, tracking_lunghezza_residua, id_univoco, lunghezza_iniziale, step_nascita]
         ordine = [side, length, id_counter, length, t_attore]
@@ -88,7 +134,6 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus = 0.5):
         return ordine
  
     # Inizializzazione delle strutture dati
-    # Per permettere la registrazione corretta dello step di nascita al tempo t=0
     t_attore = 0 
     pool = [new_hidden_order()]
  
@@ -151,33 +196,11 @@ def plot(
     max_lag=1000,
     fit_start_lag=25,
     save_path=None,
+    dist_type='pareto',
+    dist_kwargs=None
 ):
     """
     Run a grid study over multiple alpha values and numbers of traders.
-
-    For each alpha, one subplot is produced showing the simulated ACF,
-    the theoretical power-law decay, and a fitted power-law for every
-    value of n_traders.
-
-    Parameters
-    ----------
-    alphas : list of float
-        Pareto exponents to study (one subplot per value).
-    n_traders_list : list of int
-        Pool sizes to compare within each subplot.
-    total_steps : int
-        Length of the order-flow time series for each simulation.
-    max_lag : int
-        Maximum lag used for ACF computation.
-    fit_start_lag : int
-        First lag included in the power-law fit (to avoid short-lag noise).
-    save_path : str or None
-        If given, the figure is saved to this path.
-
-    Returns
-    -------
-    results : dict
-        Nested dict  results[alpha][n_traders] = {'acf': ..., 'popt': ..., 'pcov': ...}
     """
     n_alphas = len(alphas)
     lags = np.arange(1, max_lag + 1)
@@ -195,8 +218,8 @@ def plot(
         theoretical_gamma = alpha - 1
 
         for color, n_traders in zip(colors, n_traders_list):
-            print(f"  Simulating alpha={alpha}, n_traders={n_traders} …")
-            flow = simulate_lmf(alpha, n_traders, total_steps)
+            print(f"  Simulating alpha={alpha}, n_traders={n_traders} (dist={dist_type}) …")
+            flow = simulate_lmf(alpha, n_traders, total_steps, dist_type=dist_type, dist_kwargs=dist_kwargs)
             auto_corr = acf(flow, nlags=max_lag, fft=True)   # index 0 = lag-0
 
             # Power-law fit on lags >= fit_start_lag
@@ -235,17 +258,6 @@ def plot(
                     linewidth=1,
                 )
 
-        # Theoretical decay anchored at lag-1 of the first simulation
-        # first_acf = results[alpha][n_traders_list[0]]["acf"]
-        # theoretical_decay = first_acf[1] * lags ** (-theoretical_gamma)
-        # ax.loglog(
-        #     lags,
-        #     theoretical_decay,
-        #     "k:",
-        #     linewidth=2,
-        #     label=r"Theory: $\tau^{-(\alpha-1)}$",
-        # )
-
         ax.set_title(rf"$\alpha = {alpha}$  ($\gamma = \alpha-1 = {theoretical_gamma:.1f}$)")
         ax.set_xlabel(r"Lag $\tau$")
         ax.set_ylabel(r"ACF $C(\tau)$")
@@ -268,35 +280,13 @@ def plot_lambda(
     max_lag=1000,
     fit_start_lag=25,
     save_path=None,
+    dist_type='pareto',
+    dist_kwargs=None
 ):
     """
     Run a grid study over multiple lambda values for the λ model.
- 
-    Produces two subplots:
-      (a) ACF of revealed order signs for each λ, with theoretical slope.
-      (b) ACF of N(t) (liquidity fluctuations) for each λ (Section IV).
- 
-    Parameters
-    ----------
-    alpha : float
-        Pareto tail exponent.
-    lambdas : list of float
-        Arrival probabilities to compare (all should be < λ_c for stability).
-    total_steps : int
-        Length of the simulated time series.
-    max_lag : int
-        Maximum lag for ACF.
-    fit_start_lag : int
-        First lag used for power-law fitting.
-    save_path : str or None
-        If given, figure is saved here.
- 
-    Returns
-    -------
-    results : dict
-        results[lam] = {'acf_flow': ..., 'acf_N': ..., 'n_active': ...}
     """
-    lam_c = (alpha - 1) / alpha
+    lam_c = (alpha - 1) / alpha if alpha > 1 else 0.5
     lags  = np.arange(1, max_lag + 1)
     colors = ['blue', 'red', 'green', 'orange']
  
@@ -304,8 +294,8 @@ def plot_lambda(
     results = {}
  
     for color, lam in zip(colors, lambdas):
-        print(f"  Simulating λ model: alpha={alpha}, lambda={lam} (lambda_c={lam_c:.3f}) …")
-        flow, n_active = simulate_lmf_lambda(alpha, lam, total_steps)
+        print(f"  Simulating λ model: alpha={alpha}, lambda={lam} (dist={dist_type}) …")
+        flow, n_active, _ = simulate_lmf_lambda(alpha, lam, total_steps, dist_type=dist_type, dist_kwargs=dist_kwargs)
  
         acf_flow = acf(flow,     nlags=max_lag, fft=True)
         acf_N    = acf(n_active, nlags=max_lag, fft=True)
@@ -337,42 +327,16 @@ def plot_lambda(
     if save_path:
         plt.savefig(save_path, dpi=150)
         print(f"Figure saved to {save_path}")
+    else:
+        plt.savefig('images\\lmf_lambda_model.png')
  
-    plt.savefig('images\\lmf_lambda_model.png')
     plt.close()
     return results
 
 if __name__ == '__main__':
-    # --- Study parameters ---
-    """
-    alphas        = [1.2, 1.5, 1.8]
-    n_traders_list = [10, 20, 40]
-    total_steps   = 10_000_000
-    max_lag       = 1000
-
-    results = plot(
-        alphas=alphas,
-        n_traders_list=n_traders_list,
-        total_steps=total_steps,
-        max_lag=max_lag,
-        fit_start_lag=50,
-        save_path="images\\lmf_study.png",
-    )
-
-    alphas        = [1.5]
-    n_traders_list = [1, 5, 50]
-    total_steps   = 100_000_000
-    max_lag       = 1000
-
-    results = plot(
-        alphas=alphas,
-        n_traders_list=n_traders_list,
-        total_steps=total_steps,
-        max_lag=max_lag,
-        fit_start_lag=50,
-        save_path="images\\lmf_study_test.png",
-    )
-    """
-
+    # Esecuzione standard con distribuzione Pareto (comportamento originario):
     plot_lambda(1.5, [0.2, 0.3], total_steps=100_000_000)
 
+    # Esempio di utilizzo con altre distribuzioni (opzionale):
+    # plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000, dist_type='zeta')
+    # plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000, dist_type='yule', dist_kwargs={'rho': 1.5})

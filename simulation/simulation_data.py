@@ -8,26 +8,23 @@ from os import listdir
 from scipy.optimize import minimize
 from pathlib import Path
 import os
-from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from utils import clear_data, open_data, save_simulated_data
 from ar import ar_fit, simulate_ar
 from var import var_fit, simulate_var
+from var_reduced import var_reduced_fit, simulate_var_reduced
 from delta import (
     power_transform,
-    delta_fit,
     delta_fit_fixed,
-    frac_diff,
-    arfima_fit,
-    simulate_delta,
     simulate_delta_fixed,
 )
+from sign_impact import sign_impact_fit, simulate_sign_impact
 
 paths = np.array(listdir('..\\database\\data'))
 
 p = 1000
 
-name = f'delta_0.3_1000'
+name = f'ver_reduced_1000'
 
 dir = 'database\\data_' + name
 
@@ -49,9 +46,9 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p]  # Prezzo reale al punto p
 
-    results = delta_fit_fixed(r, v, delta=0.3, p = p)
+    results = var_reduced_fit(r, v, p = p)
 
-    prices_sim, volumes_sim, r_sim = simulate_delta_fixed(
+    prices_sim, volumes_sim, r_sim = simulate_var_reduced(
         results,
         n_steps=len(r),
         initial_v=initial_v,

@@ -7,10 +7,10 @@ import os
 from os import listdir
 import methods
 
-model = "lmf_1.8_0.3_log_ar_tim_sqrt"
-#model = ''
-iterations = 50  # Added iterations variable with default value of 10
-n_filter = 10
+#model = "lmf_1.8_0.3_real_tim_sqrt"
+model = 'real_tim_sqrt'
+iterations = 10  # Added iterations variable with default value of 10
+n_filter = 2
 
 data_dir = 'database\\data'
 
