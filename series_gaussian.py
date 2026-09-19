@@ -213,11 +213,6 @@ if __name__ == '__main__':
     print(f"Reconstructed p(+1) = {np.mean([np.mean(b > 0) for b in binary_signals]):.4f}  "
           f"(target {p_plus:.4f})")
 
-    print(f"\nRound-trip check (lags 1-5):")
-    print(f"  {'lag':>4}  {'R_bin_orig':>12}  {'R_gauss_target':>15}  {'R_bin_recon':>12}")
-    for k in range(1, 6):
-        print(f"  {k:>4}  {pooled[k]:>12.5f}  {acf_gauss_target[k]:>15.5f}  "
-              f"{acf_recon_binary[k]:>12.5f}")
 
     plot_round_trip(pooled, acf_recon_binary, acf_gauss_target, acf_recon_gauss, max_lag)
     print("\nSaved: database/acf_gaussian.npy, images/acf/acf_roundtrip.png")

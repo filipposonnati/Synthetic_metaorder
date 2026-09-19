@@ -7,6 +7,7 @@ from statsmodels.tsa.stattools import acf
 from scipy.stats import linregress
 from pathlib import Path
 import os
+from scipy.optimize import curve_fit
 
 plt.rcParams.update({
     'font.size': 12,
@@ -23,6 +24,9 @@ plt.rcParams.update({
 
 def power_law(x, A, delta):
     return A * x**delta
+
+def log_power_law(log_x, log_A, delta):
+    return log_A + delta * log_x
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -65,14 +69,13 @@ def pooled_acf(series_list, nlags):
 # PLOT ACF
 # ══════════════════════════════════════════════════════════════════════════════
 
-def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
+def plot_acf(pooled, max_lag):
     """
     Single-panel figure: pooled ACF with:
-      * direct power-law fit to the log-binned tail (lag >= 20)
-      * theoretical prediction from DFA exponent
+      * raw unbinned ACF shown as cyan points
+      * log-binned ACF
+      * direct power-law fit using scipy.optimize.curve_fit
     """
-    data_matrix = np.array(all_daily_corrs)          # (n_days, max_lag+1)
-    err_vals    = sem(data_matrix, axis=0)[1:]        # SEM over days, lags 1..max_lag
 
     lags        = np.arange(1, max_lag + 1)
     pooled_vals = pooled[1:]                          # drop lag-0
@@ -97,54 +100,70 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
     bin_centers = np.array(bin_centers)
     binned_acf = np.array(binned_acf)
 
-    # ── 2. FIT SULLA CODA DEI DATI BANNATI (lag >= 20) ──────────────────────
-    # Applichiamo la maschera di taglio direttamente sui centri dei bin calcolati
-    tail_mask_binned = bin_centers >= 20
+    # ── 2. FIT CON CURVE_FIT SULLA CODA DEI DATI BINNATI ───────────────────
+    tail_mask_binned = (bin_centers >= 10) & (bin_centers < 1000)
 
-    # Guard: assicuriamoci di prendere solo valori strettamente positivi per il log
+    # Prendiamo solo valori strettamente positivi per la coda
     valid_binned = tail_mask_binned & (binned_acf > 0)
     
-    log_lags_binned = np.log10(bin_centers[valid_binned])
-    log_y_binned    = np.log10(binned_acf[valid_binned])
+    x_fit = bin_centers[valid_binned]
+    y_fit = binned_acf[valid_binned]
 
-    # Regressione lineare sui dati binnati
-    slope, intercept, r_value, _, std_err_fit = linregress(log_lags_binned, log_y_binned)
+    # Stima iniziale per i parametri [A, delta]
+    p0 = [1.0, -0.5]
 
-    gamma_empirico = -slope          # Esponente della coda ACF dal fit binnato
-    A_fit          = 10 ** intercept
+    # Fit non lineare con curve_fit
+    popt, pcov = curve_fit(log_power_law, np.log10(x_fit), np.log10(y_fit))
+    log_A_fit, delta_fit = popt
+    A_fit = 10**log_A_fit
+    
+    # Calcolo incertezza sugli errori dai parametri (deviazione standard)
+    perr = np.sqrt(np.diag(pcov))
+    delta_err = perr[1]
 
-    # Ancoriamo la predizione DFA al primo punto valido della coda binnata
-    A_dfa = 10 ** (log_y_binned[0] + gamma_dfa * log_lags_binned[0])
+    gamma_empirico = -delta_fit          # Esponente della coda ACF
 
-    print("\n--- ACF Tail Fitting Report (On Log-Binned Data) ---")
-    print(f"  Delta from ACF direct fit : {gamma_empirico:.4f}")
-    print(f"  Delta predicted by DFA    : {gamma_dfa:.4f}")
-    print(f"  R² of tail fit            : {r_value**2:.4f}")
-    print(f"  Std error of slope        : {std_err_fit:.4f}")
+    print("\n--- ACF Tail Fitting Report (curve_fit) ---")
+    print(f"  A fit                     : {A_fit:.4f} ± {perr[0]:.4f}")
+    print(f"  Delta (slope)             : {delta_fit:.4f} ± {delta_err:.4f}")
+    print(f"  Gamma ACF                 : {gamma_empirico:.4f}")
 
     # ── 3. PLOTTING ──────────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 1, figsize=(9, 6))
 
-    # Grafico a dispersione dei punti binnati e ripuliti dal rumore
-    ax.plot(bin_centers, binned_acf, color='black', alpha=1.0, linestyle='-', marker = 'o', label='Pooled ACF')
-
-    """
-    # Curva di fit calcolata sui dati binnati (mostrata sull'intervallo di fit)
+    # 1. Dati NON binnati (Raw ACF) con pallini celesti
+    valid_raw = pooled_vals > 0
     ax.plot(
-        bin_centers[valid_binned],
-        power_law(bin_centers[valid_binned], A_fit, slope),
-        color='tomato', lw=2.5, ls='--',
-        label=rf'ACF tail fit (binned) $\gamma_{{ACF}}$={gamma_empirico:.3f}'
+        lags[valid_raw], 
+        pooled_vals[valid_raw], 
+        color='tab:blue', 
+        marker='o', 
+        linestyle='', 
+        markersize=5, 
+        markeredgecolor='white',    # Bordo bianco
+        markeredgewidth=0.5,
+        alpha=0.75, 
+        label='Raw ACF'
     )
 
-    # Predizione DFA ancorata ai dati binnati
+    # 2. Dati binnati
     ax.plot(
-        bin_centers[valid_binned],
-        power_law(bin_centers[valid_binned], A_dfa, -gamma_dfa),
-        color='purple', lw=2, ls=':',
-        label=rf'DFA prediction  $\gamma_{{DFA}}$={gamma_dfa:.3f}'
+        bin_centers, 
+        binned_acf, 
+        color='black', 
+        alpha=1.0, 
+        linestyle='-', 
+        marker='o', 
+        label='Binned ACF'
     )
-    """
+
+    # 3. Curva di fit calcolata con curve_fit
+    ax.plot(
+        x_fit,
+        power_law(x_fit, A_fit, delta_fit),
+        color='red', lw=2.0, ls='--',
+        label=rf'ACF fit $\gamma_{{ACF}}={gamma_empirico:.3f} \pm {delta_err:.3f}$'
+    )
 
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -156,7 +175,7 @@ def plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag):
     fig.tight_layout()
     os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
     fig.savefig(os.path.join('images', 'acf', 'acf.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    plt.show()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -187,10 +206,8 @@ if __name__ == '__main__':
         np.save(cache_path, pooled)
         print("Saved pooled ACF to cache.")
 
-    gamma_dfa = 0.752
-
     # ── Plot ─────────────────────────────────────────────────────────────────
-    plot_acf(pooled, all_daily_corrs, gamma_dfa, max_lag)
+    plot_acf(pooled, max_lag)
 
     # ── Save auxiliary outputs for downstream scripts ─────────────────────────
     all_signs_concat = np.concatenate(all_signs)

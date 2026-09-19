@@ -75,97 +75,75 @@ if __name__ == '__main__':
 
     theory  =  0.0550 * lags ** (-0.5)
 
-    # ── 6. Applica Log-Binning ai dati simulati ed empirici ───────────────────
+    # ── 2. Applica Log-Binning ai dati simulati ed empirici ───────────────────
     NUM_BINS = 50
 
-    # ── 7. Plot ───────────────────────────────────────────────────────────────
+    # ── 3. Plot Setup ─────────────────────────────────────────────────────────
     plt.rcParams.update({
         'font.size': 12, 'axes.titlesize': 16, 'axes.labelsize': 14,
-        'xtick.labelsize': 11, 'ytick.labelsize': 11, 'legend.fontsize': 11,
+        'xtick.labelsize': 11, 'ytick.labelsize': 11, 'legend.fontsize': 10,
     })
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(12, 7))
 
-    # Usiamo 'marker' (punti/quadrati) per i dati binnati, così si capisce che è una media
     # Empirical (real data)
-    x_emp, y_emp     = log_bin_acf(pooled_acf, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_emp, y_emp, marker='o', linestyle='-', color='black', lw=1.5, label='Empirical pooled ACF')
+    x_emp, y_emp = log_bin_acf(pooled_acf, max_lag, num_bins=NUM_BINS)
+    ax.loglog(x_emp, y_emp, marker='o', linestyle='-', color='black', lw=2.0, label='Empirical pooled ACF')
 
-
-    # ── 3. Fixed-N LMF ───────────────────────────────────────────────────────
-    print(f"Simulating fixed-N LMF ...")
-    LMF_N_TRADERS = 100
-    flow_fixed = simulate_lmf(LMF_ALPHA, LMF_N_TRADERS, TOTAL_STEPS)
-    acf_fixed  = acf(flow_fixed, nlags=max_lag, fft=True)
-
-    x_fix, y_fix     = log_bin_acf(acf_fixed, max_lag, num_bins=NUM_BINS)
-
-    ax.loglog(x_fix, y_fix, marker='^', linestyle='-', color='tomato', lw=1.2, alpha=0.8,
-              label=rf'LMF fixed-N  ($\alpha={LMF_ALPHA}$, $N={LMF_N_TRADERS}$)')
-
-
+    # Configurazione test distribuzioni
+    distributions_to_test = [
+        # (label, dist_type, alpha_param, dist_kwargs, color, marker)
+        ('Pareto (default)', 'pareto', LMF_ALPHA, {}, 'tomato', '^'),
+        ('Zeta (Zipf)', 'zeta', LMF_ALPHA + 1.0, {}, 'chocolate', 's'),
+        ('Yule-Simon', 'yule', LMF_ALPHA, {'rho': LMF_ALPHA}, 'darkorange', 'v'),
+        ('Lomax', 'lomax', LMF_ALPHA, {'scale': 1.0}, 'mediumpurple', '<')
+    ]
 
     LMF_N_TRADERS = 50
-    flow_fixed = simulate_lmf(LMF_ALPHA, LMF_N_TRADERS, TOTAL_STEPS)
-    acf_fixed  = acf(flow_fixed, nlags=max_lag, fft=True)
 
-    x_fix, y_fix     = log_bin_acf(acf_fixed, max_lag, num_bins=NUM_BINS)
+    # ── 4. Simulazioni Fixed-N con le differenti distribuzioni ────────────────
+    for label, dist_type, alpha_val, kwargs, color, marker in distributions_to_test:
+        print(f"Simulating fixed-N LMF with {dist_type}")
+        flow = simulate_lmf(
+            alpha=alpha_val, 
+            n_traders=LMF_N_TRADERS, 
+            total_steps=TOTAL_STEPS, 
+            dist_type=dist_type, 
+            dist_kwargs=kwargs
+        )
+        acf_val = acf(flow, nlags=max_lag, fft=True)
+        x_bin, y_bin = log_bin_acf(acf_val, max_lag, num_bins=NUM_BINS)
 
-    ax.loglog(x_fix, y_fix, marker='^', linestyle='-', color='red', lw=1.2, alpha=0.8,
-              label=rf'LMF fixed-N  ($\alpha={LMF_ALPHA}$, $N={LMF_N_TRADERS}$)')
+        ax.loglog(x_bin, np.abs(y_bin), marker=marker, linestyle='-', color=color, lw=1.2, alpha=0.85,
+                  label=f'{label} ($N={LMF_N_TRADERS}$)')
 
+    # ── 5. Simulazione Lambda-model con distribuzione Zeta ────────────────────
+    for label, dist_type, alpha_val, kwargs, color, marker in distributions_to_test:
+        LMF_LAMBDA = 0.3
+        print(f"Simulating λ-model LMF with {dist_type}")
+        flow_lambda, _, _ = simulate_lmf_lambda(
+            alpha=alpha_val, 
+            lam=LMF_LAMBDA, 
+            total_steps=TOTAL_STEPS, 
+            dist_type=dist_type,
+            dist_kwargs=kwargs
+        )
+        acf_lambda = acf(flow_lambda, nlags=max_lag, fft=True)
+        x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
 
+        ax.loglog(x_lam, np.abs(y_lam), marker=marker, linestyle='-', color=color, lw=1.5, alpha=0.9,
+                label=rf'LMF $\lambda$-model {label} ($\lambda={LMF_LAMBDA}$)')
 
-    # ── 4. λ-model LMF ───────────────────────────────────────────────────────
-    print(f"Simulating λ-model LMF ...")
-    LMF_LAMBDA = 0.3
-    lam_c = (LMF_LAMBDA - 1) / LMF_LAMBDA
-    flow_lambda, _, _ = simulate_lmf_lambda(LMF_ALPHA, LMF_LAMBDA, TOTAL_STEPS)
-    acf_lambda     = acf(flow_lambda, nlags=max_lag, fft=True)
-
-    x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
-
-    ax.loglog(x_lam, np.abs(y_lam), marker='d', linestyle='-', color='seagreen', lw=1.2, alpha=0.8,
-              label=rf'LMF $\lambda$-model  ($\alpha={LMF_LAMBDA}$, $\lambda={LMF_LAMBDA}$)')
-
-
-
-    LMF_LAMBDA = 0.3
-    p_random = 0.22
-    lam_c = (LMF_LAMBDA - 1) / LMF_LAMBDA
-    flow_lambda, _, _ = simulate_lmf_lambda(LMF_ALPHA, LMF_LAMBDA, TOTAL_STEPS, p_trade_random=p_random)
-    acf_lambda     = acf(flow_lambda, nlags=max_lag, fft=True)
-
-    x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
-
-    ax.loglog(x_lam, np.abs(y_lam), marker='d', linestyle='-', color='green', lw=1.2, alpha=0.8,
-              label=rf'LMF $\lambda$-model  ($\alpha={LMF_LAMBDA}$, $\lambda={LMF_LAMBDA}$, $p_{{RANDOM}} = {p_random}$)')
-
-
-
-    LMF_LAMBDA = 0.2
-    lam_c = (LMF_LAMBDA - 1) / LMF_LAMBDA
-    flow_lambda, _, _ = simulate_lmf_lambda(LMF_ALPHA, LMF_LAMBDA, TOTAL_STEPS, p_trade_random=p_random)
-    acf_lambda     = acf(flow_lambda, nlags=max_lag, fft=True)
-
-    x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
-
-    ax.loglog(x_lam, np.abs(y_lam), marker='d', linestyle='-', color='blue', lw=1.2, alpha=0.8,
-              label=rf'LMF $\lambda$-model  ($\alpha={LMF_LAMBDA}$, $\lambda={LMF_LAMBDA}$)')
-
-
-    
     # Teoria
-    ax.loglog(lags, theory, color='black', lw=1.2, linestyle=':',
-              label=rf'Theory $\tau^{{-0.5}}$')
+    ax.loglog(lags, theory, color='black', lw=1.5, linestyle=':', label=rf'Theory $\tau^{{-0.5}}$')
 
     ax.set_xlabel(r'Lag $\tau$')
     ax.set_ylabel(r'ACF $C(\tau)$')
-    ax.legend(loc='lower left')
+    ax.legend(loc='lower left', framealpha=0.9)
     ax.grid(True, which='both', alpha=0.25)
     fig.tight_layout()
 
     os.makedirs(os.path.join('images', 'acf'), exist_ok=True)
-    fig.savefig(os.path.join('images', 'acf', 'acf_comparison.png'), dpi=300, bbox_inches='tight')
-    print(f"\nFigure saved to {os.path.join('images', 'acf', 'acf_comparison.png')}")
+    fig.savefig(os.path.join('images', 'acf', 'acf_comparison_new.png'), dpi=300, bbox_inches='tight')
+    print(f"\nFigure saved to {os.path.join('images', 'acf', 'acf_comparison_new.png')}")
     plt.show()

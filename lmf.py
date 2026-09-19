@@ -13,30 +13,24 @@ def sample_metaorder_length(dist_type='pareto', alpha=1.5, **kwargs):
     dist_type = dist_type.lower()
     
     if dist_type == 'pareto':
-        # Default: Pareto continua campionata e floorata a int
         return int(np.random.pareto(alpha) + 1)
     
     elif dist_type in ['zeta', 'zipf']:
-        # Zeta / Zipf discreta pura: P(k) ~ k^-alpha
         return int(np.random.zipf(alpha))
     
     elif dist_type == 'yule':
-        # Yule-Simon: asintoticamente k^-(alpha + 1), richiede parametro rho = alpha
         rho = kwargs.get('rho', alpha)
         return int(stats.yulesimon.rvs(rho))
     
     elif dist_type in ['logarithmic', 'logser']:
-        # Logaritmica: p deve essere compreso tra 0 e 1 (default 0.8)
         p = kwargs.get('p', 0.8)
         return int(stats.logser.rvs(p))
     
     elif dist_type == 'lomax':
-        # Lomax discreta (Pareto tipo II): P(k) ~ (1 + k/scale)^-alpha
         scale = kwargs.get('scale', 1.0)
         return int(np.floor(stats.lomax.rvs(alpha, scale=scale))) + 1
     
     elif dist_type in ['nbinom', 'negative_binomial']:
-        # Binomiale Negativa traslata (+1) per supporto L >= 1
         n_param = kwargs.get('r', 1)
         p_param = kwargs.get('p', 0.1)
         return int(np.random.negative_binomial(n_param, p_param)) + 1
@@ -47,9 +41,13 @@ def sample_metaorder_length(dist_type='pareto', alpha=1.5, **kwargs):
 def power_law(x, constant, alpha):
     return constant * x**alpha
 
-def simulate_lmf(alpha, n_traders, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None):
+def simulate_lmf(alpha, n_traders, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None, p_trade_random=0.0):
     """
     Advanced simulation: pool of traders with overlapping metaorders.
+    
+    p_trade_random : float, opzionale
+        Probabilità (tra 0.0 e 1.0) che la transazione corrente sia rumore con segno casuale
+        anziché provenire da un metaordine.
     """
     if dist_kwargs is None:
         dist_kwargs = {}
@@ -67,18 +65,22 @@ def simulate_lmf(alpha, n_traders, total_steps, p_plus=0.5, dist_type='pareto', 
     order_flow = np.zeros(total_steps)
 
     for t in range(total_steps):
-        idx = np.random.randint(0, n_traders)
-        side, remaining = trader_state[idx]
-        order_flow[t] = side
-        remaining -= 1
-        if remaining <= 0:
-            trader_state[idx] = get_new_metaorder()
+        # Con probabilità p_trade_random viene generata una transazione totalmente casuale
+        if p_trade_random > 0.0 and np.random.random() < p_trade_random:
+            order_flow[t] = np.sign(np.random.rand() - (1 - p_plus))
         else:
-            trader_state[idx, 1] = remaining
+            idx = np.random.randint(0, n_traders)
+            side, remaining = trader_state[idx]
+            order_flow[t] = side
+            remaining -= 1
+            if remaining <= 0:
+                trader_state[idx] = get_new_metaorder()
+            else:
+                trader_state[idx, 1] = remaining
             
     return order_flow
 
-def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None):
+def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None, p_trade_random=0.0):
     """
     λ-model simulation di Lillo, Mike & Farmer (2005) con tracciamento dei metaordini.
     
@@ -96,6 +98,9 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
         Distribuzione dei metaordini (default 'pareto'). Opzioni: 'pareto', 'zeta', 'yule', 'logarithmic', 'lomax', 'nbinom'.
     dist_kwargs : dict or None
         Parametri aggiuntivi per la distribuzione scelta.
+    p_trade_random : float, optional (default=0.0)
+        Probabilità che al tempo t venga eseguita una transazione dal segno casuale 
+        anziché consumare una quota di un metaordine attivo.
         
     Returns
     -------
@@ -153,30 +158,34 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
             pool.append(new_hidden_order())
  
         # --- 2. Execution step ---
-        n = len(pool)
-        idx = np.random.randint(0, n)
-        
-        # Estraiamo i dati dell'ordine selezionato
-        side, remaining, o_id, L_init, t_birth = pool[idx]
-        
-        order_flow[t] = side
-        remaining -= 1
-        
-        if remaining <= 0:
-            # L'ordine è stato interamente eseguito. Registriamo le sue metriche.
-            storico_metaordini.append({
-                "id": o_id,
-                "lunghezza_iniziale": L_init,
-                "step_creazione": t_birth,
-                "step_completamento": t,
-                "lifetime_effettivo": t - t_birth + 1
-            })
-            # O(1) Rimozione dal pool (swap con l'ultimo elemento e pop)
-            pool[idx] = pool[-1]
-            pool.pop()
+        # Verifica se generare un trade dal segno casuale (noise trade)
+        if p_trade_random > 0.0 and np.random.random() < p_trade_random:
+            order_flow[t] = np.sign(np.random.rand() - (1 - p_plus))
         else:
-            # Aggiorna solo la lunghezza rimanente dell'ordine nel pool
-            pool[idx][1] = remaining
+            n = len(pool)
+            idx = np.random.randint(0, n)
+            
+            # Estraiamo i dati dell'ordine selezionato
+            side, remaining, o_id, L_init, t_birth = pool[idx]
+            
+            order_flow[t] = side
+            remaining -= 1
+            
+            if remaining <= 0:
+                # L'ordine è stato interamente eseguito. Registriamo le sue metriche.
+                storico_metaordini.append({
+                    "id": o_id,
+                    "lunghezza_iniziale": L_init,
+                    "step_creazione": t_birth,
+                    "step_completamento": t,
+                    "lifetime_effettivo": t - t_birth + 1
+                })
+                # O(1) Rimozione dal pool (swap con l'ultimo elemento e pop)
+                pool[idx] = pool[-1]
+                pool.pop()
+            else:
+                # Aggiorna solo la lunghezza rimanente dell'ordine nel pool
+                pool[idx][1] = remaining
  
         n_active[t] = len(pool)
  
@@ -197,14 +206,15 @@ def plot(
     fit_start_lag=25,
     save_path=None,
     dist_type='pareto',
-    dist_kwargs=None
+    dist_kwargs=None,
+    p_trade_random=0.0
 ):
     """
     Run a grid study over multiple alpha values and numbers of traders.
     """
     n_alphas = len(alphas)
     lags = np.arange(1, max_lag + 1)
-    fit_slice = slice(fit_start_lag - 1, None)      # lags[fit_slice] starts at fit_start_lag
+    fit_slice = slice(fit_start_lag - 1, None)
     colors = ['blue', 'red', 'green']
 
     fig, axes = plt.subplots(1, n_alphas, figsize=(7 * n_alphas, 6), sharey=False)
@@ -218,11 +228,17 @@ def plot(
         theoretical_gamma = alpha - 1
 
         for color, n_traders in zip(colors, n_traders_list):
-            print(f"  Simulating alpha={alpha}, n_traders={n_traders} (dist={dist_type}) …")
-            flow = simulate_lmf(alpha, n_traders, total_steps, dist_type=dist_type, dist_kwargs=dist_kwargs)
-            auto_corr = acf(flow, nlags=max_lag, fft=True)   # index 0 = lag-0
+            print(f"  Simulating alpha={alpha}, n_traders={n_traders} (dist={dist_type}, p_random={p_trade_random}) …")
+            flow = simulate_lmf(
+                alpha, 
+                n_traders, 
+                total_steps, 
+                dist_type=dist_type, 
+                dist_kwargs=dist_kwargs, 
+                p_trade_random=p_trade_random
+            )
+            auto_corr = acf(flow, nlags=max_lag, fft=True)
 
-            # Power-law fit on lags >= fit_start_lag
             try:
                 popt, pcov = curve_fit(
                     power_law,
@@ -241,14 +257,12 @@ def plot(
                 "pcov": pcov,
             }
 
-            # Simulated ACF
             ax.loglog(
                 lags,
                 auto_corr[1:],
                 color=color,
                 label=f"$N={n_traders}$",
             )
-            # Fitted power law (dashed)
             if not np.isnan(popt[0]):
                 ax.loglog(
                     lags,
@@ -281,7 +295,8 @@ def plot_lambda(
     fit_start_lag=25,
     save_path=None,
     dist_type='pareto',
-    dist_kwargs=None
+    dist_kwargs=None,
+    p_trade_random=0.0
 ):
     """
     Run a grid study over multiple lambda values for the λ model.
@@ -294,8 +309,15 @@ def plot_lambda(
     results = {}
  
     for color, lam in zip(colors, lambdas):
-        print(f"  Simulating λ model: alpha={alpha}, lambda={lam} (dist={dist_type}) …")
-        flow, n_active, _ = simulate_lmf_lambda(alpha, lam, total_steps, dist_type=dist_type, dist_kwargs=dist_kwargs)
+        print(f"  Simulating λ model: alpha={alpha}, lambda={lam} (dist={dist_type}, p_random={p_trade_random}) …")
+        flow, n_active, _ = simulate_lmf_lambda(
+            alpha, 
+            lam, 
+            total_steps, 
+            dist_type=dist_type, 
+            dist_kwargs=dist_kwargs, 
+            p_trade_random=p_trade_random
+        )
  
         acf_flow = acf(flow,     nlags=max_lag, fft=True)
         acf_N    = acf(n_active, nlags=max_lag, fft=True)
@@ -306,7 +328,6 @@ def plot_lambda(
         ax1.loglog(lags, np.abs(acf_flow[1:]), color=color, label=label)
         ax2.loglog(lags, np.abs(acf_N[1:]),    color=color, label=label)
  
-    # Theoretical slope τ^{-(α-1)} anchored at lag-1 of first simulation
     first_acf = results[lambdas[0]]["acf_flow"]
     theory = first_acf[1] * lags ** (-(alpha - 1))
     ax1.loglog(lags, theory, "k--", linewidth=1.5, label=rf"Theory $\tau^{{-{alpha-1:.2f}}}$")
@@ -334,9 +355,8 @@ def plot_lambda(
     return results
 
 if __name__ == '__main__':
-    # Esecuzione standard con distribuzione Pareto (comportamento originario):
-    plot_lambda(1.5, [0.2, 0.3], total_steps=100_000_000)
+    # Esecuzione standard (con p_trade_random=0.0 di default)
+    plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000)
 
-    # Esempio di utilizzo con altre distribuzioni (opzionale):
-    # plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000, dist_type='zeta')
-    # plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000, dist_type='yule', dist_kwargs={'rho': 1.5})
+    # Esempio con il 10% di transazioni casuali (p_trade_random = 0.1)
+    # plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000, p_trade_random=0.1)

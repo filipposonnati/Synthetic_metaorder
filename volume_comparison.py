@@ -108,7 +108,7 @@ def _salva(fig, nome_file: str):
     print(f"Grafico salvato in: {path_completo}")
 
 
-def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: dict[str, bool] | None = None):
+def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame]):
     """
     Confronta piu' distribuzioni normalizzate.
     """
@@ -116,28 +116,16 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
     serie_dict = {nome: df["volume_norm"] for nome, df in dati_dict.items()}
     colori = {nome: PALETTE[i % len(PALETTE)] for i, nome in enumerate(nomi)}
 
-    if intraday_flags is None:
-        intraday_flags = {nome: True for nome in nomi}
-
     # --- Statistiche descrittive ---
     print("=== Statistiche descrittive (volumi normalizzati) ===")
     for nome, s in serie_dict.items():
         print(f"\n{nome}:")
         print(s.describe())
 
-    # --- Test KS a coppie ---
-    print("\n=== Test Kolmogorov-Smirnov a coppie ===")
-    for i in range(len(nomi)):
-        for j in range(i + 1, len(nomi)):
-            a, b = nomi[i], nomi[j]
-            stat, pvalue = stats.ks_2samp(serie_dict[a], serie_dict[b])
-            print(f"{a} vs {b}: statistic={stat:.4f}, p-value={pvalue:.4g}"
-                  f"  -> {'distribuzioni diverse' if pvalue < 0.05 else 'nessuna differenza significativa'}")
-
     # --- 1. Istogramma a gradini in scala log-log ---
     fig, ax = plt.subplots(figsize=(10, 6))
     tutti_valori = np.concatenate([s[s > 0].values for s in serie_dict.values()])
-    bins = np.logspace(np.log10(tutti_valori.min()), np.log10(tutti_valori.max()), 60)
+    bins = np.logspace(np.log10(tutti_valori.min()), np.log10(tutti_valori.max()), 100)
     for nome, s in serie_dict.items():
         s_pos = s[s > 0]
         ax.hist(s_pos, bins=bins, density=True, histtype="step",
@@ -194,32 +182,6 @@ def confronta_distribuzioni(dati_dict: dict[str, pd.DataFrame], intraday_flags: 
     _salva(fig, "ecdf.png")
     plt.close(fig)
 
-    # --- 4. Profilo intraday ---
-    nomi_da_includere = [
-        nome for nome in nomi
-        if intraday_flags.get(nome, True) and "ora_ore" in dati_dict[nome].columns
-    ]
-    esclusi = [nome for nome in nomi if nome not in nomi_da_includere]
-
-    if nomi_da_includere:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        for nome in nomi_da_includere:
-            df = dati_dict[nome]
-            minuto = (df["ora_ore"] * 60).round() / 60.0
-            profilo = df.groupby(minuto)["volume_norm"].mean().sort_index()
-            ax.plot(profilo.index, profilo.values, label=nome, color=colori[nome], linewidth=2)
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Normalized Volume")
-        ax.grid(alpha=0.3)
-        ax.legend(frameon=False)
-        fig.tight_layout()
-        _salva(fig, "intraday_profile.png")
-        plt.close(fig)
-        if esclusi:
-            print(f"\n(Esclusi dal profilo intraday: {', '.join(esclusi)})")
-    else:
-        print("\n(Nessun dataset abilitato/con orario valido: salto il grafico del profilo intraday)")
-
 
 def estrai_file_casuali(cartella_path: str, n: int) -> list[str]:
     """
@@ -246,7 +208,7 @@ if __name__ == "__main__":
     # =========================================================================
     # CONFIGURAZIONE GENERALE: QUI MODIFICHI IL VALORE DI N
     # =========================================================================
-    N_FILES = 10  # Quanti file estrarre a caso e UNIRE da ciascuna cartella (Real, AR, MEM)
+    N_FILES = 25  # Quanti file estrarre a caso e UNIRE da ciascuna cartella (Real, AR, MEM)
 
     dati = {}
     intraday_flags = {}
@@ -275,14 +237,18 @@ if __name__ == "__main__":
             "cartella": "database/data_ar_1000",
             "includi_intraday": False,
         },
-        "MEM burr12": {
-            "cartella": r"database\data_lmf_1.5_50_mem_tim_sqrt", # Preservato raw string originale
+        "VAR": {
+            "cartella": "database/data_var_1000",
             "includi_intraday": False,
         },
-        "log AR": {
-                "cartella": r"database\data_lmf_1.5_50_log_ar_tim_sqrt", # Preservato raw string originale
-                "includi_intraday": False,
+        "Bootstrap": {
+            "cartella": "database/data_real_tim_lin",
+            "includi_intraday": False,
         },
+        "MEM burr12": {
+            "cartella": r"database\data_lmf_1.8_0.8_mem_tim_sqrt", # Preservato raw string originale
+            "includi_intraday": False,
+        }
     }
 
     print(f"\n=== Estrazione casuale di {N_FILES} file per cartella (Uniti insieme) ===")
@@ -301,11 +267,6 @@ if __name__ == "__main__":
         # Se abbiamo caricato con successo almeno un file, li uniamo in un unico blocco dati
         if dfs_da_unire:
             dati[etichetta] = pd.concat(dfs_da_unire, ignore_index=True)
-            intraday_flags[etichetta] = info["includi_intraday"]
 
-    print("====================================================================\n")
 
-    if dati:
-        confronta_distribuzioni(dati, intraday_flags)
-    else:
-        print("Impossibile procedere: configurazione o dati assenti.")
+    confronta_distribuzioni(dati)
