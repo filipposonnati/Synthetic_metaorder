@@ -4,6 +4,9 @@ from statsmodels.tsa.stattools import acf
 from pathlib import Path
 import os
 import sys
+from os import listdir
+import pandas as pd
+from acf import pooled_acf as pooled_acf_function
 
 # ── local imports ─────────────────────────────────────────────────────────────
 _HERE = Path(__file__).parent
@@ -72,6 +75,31 @@ if __name__ == '__main__':
     lags       = np.arange(1, max_lag + 1)
 
     print(f"Loaded empirical ACF  (max_lag={max_lag},  p_plus={p_plus:.4f})")
+
+
+
+    data_ar_dir = os.path.join('database', 'data_ar_1000')
+    paths    = listdir(data_ar_dir)
+    max_lag  = 5_000
+
+    all_signs       = []
+    all_daily_corrs = []
+
+    for path in paths:
+        trades = pd.read_csv(os.path.join(data_ar_dir, path), header=None)
+        signs  = trades[3].values.astype(float)
+        all_signs.append(signs)
+        all_daily_corrs.append(acf(signs, nlags=max_lag, fft=True))
+
+    cache_path = Path("database/acf_ar.npy")
+    if cache_path.is_file():
+        pooled_ar = np.load(cache_path)
+        print("Loaded cached pooled ACF ar.")
+    else:
+        print("Computing pooled ACF …")
+        pooled_ar = pooled_acf_function(all_signs, nlags=max_lag)
+        np.save(cache_path, pooled_ar)
+        print("Saved pooled ACF to cache.")
 
     theory  =  0.0550 * lags ** (-0.5)
 

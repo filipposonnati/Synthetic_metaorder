@@ -130,7 +130,7 @@ def simulate_day(n_trades, volumes_real, volume_model, alpha, n_traders, lambda_
 
 def run(data_dir = r"..\database\data",
         out_dir = r"..\database\data_generated",
-        alpha = 1.8,
+        alpha = 1.5,
         n_traders = None,
         lambda_lmf = 0.3,
         volume_model = 'empirical',      # 'mem' | 'log_ar'
@@ -195,8 +195,8 @@ def run(data_dir = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir         = r"..\database\data",
-        out_dir          = r"..\database\data_lmf_1.8_0.3_real_no_param_returns",
-        alpha            = 1.8,
+        out_dir          = r"..\database\data_lmf_1.5_0.3_real_no_param_returns",
+        alpha            = 1.5,
         n_traders        = None,
         lambda_lmf       = 0.3,
         volume_model     = 'empirical',

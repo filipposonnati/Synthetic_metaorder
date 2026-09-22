@@ -83,6 +83,7 @@ def generate(delta_map: dict[str, int],
                      lmf_lambda: float = None) -> dict[str, np.ndarray]:
     
     data_dir = 'database/data'
+    ar_data_dir = 'database/data_ar_1000'
     paths = np.array(listdir(data_dir))
     max_delta = max(delta_map.values())
 
@@ -103,6 +104,7 @@ def generate(delta_map: dict[str, int],
 
         for path in paths:
             trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
+            ar_trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
 
             # ── Resolve signs for this (iteration, file) pair ────────────────
             if signs_origin == 'lmf':
@@ -113,6 +115,9 @@ def generate(delta_map: dict[str, int],
                 signs = generate_binary_sequence(
                     len(trades), p_plus=np.mean(np.array(trades[3])) + 0.5, N = 1_000_000
                 )
+            elif signs_origin == 'ar':
+                raw = np.array(ar_trades[3])
+                signs = np.where(raw > 0, 1, -1)
             elif signs_origin == '':
                 # Real signs: column 3 contains raw signs in {0,1} or {-1,+1};
                 # normalise to +1 / -1 so the metaid logic is consistent.
@@ -149,11 +154,11 @@ def generate(delta_map: dict[str, int],
 if __name__ == '__main__':
     # ── Signs settings ───────────────────────────────────────────────────────
     iterations     = 10      # TARGET number of iterations to reach
-    signs_origin   = 'lmf_lambda'  # 'lmf', 'gaussian', or '' (real signs from data)
+    signs_origin   = 'ar'  # 'lmf', 'gaussian', 'ar' or '' (real signs from data)
     
     lmf_alpha      = 1.5
     lmf_nb_traders = 10
-    lmf_lambda     = 0.3
+    lmf_lambda     = 0.32
 
     # ── Load configurations from CSV ─────────────────────────────────────────
     cfg_df = pd.read_csv('configurations.csv', comment="#")
@@ -170,6 +175,8 @@ if __name__ == '__main__':
     elif signs_origin == 'lmf_lambda':
         results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_lambda}'
     elif signs_origin == 'gaussian':
+        results_dir = f'database\\meta_child_dist_{signs_origin}'
+    elif signs_origin == 'ar':
         results_dir = f'database\\meta_child_dist_{signs_origin}'
     elif signs_origin == '':
         results_dir = f'database\\meta_child_dist'

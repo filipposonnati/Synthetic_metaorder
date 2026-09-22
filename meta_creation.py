@@ -7,8 +7,8 @@ import os
 from os import listdir
 import methods
 
-#model = "lmf_1.8_0.3_real_tim_sqrt"
-model = 'real_tim_sqrt'
+model = "lmf_1.5_0.3_real_tim_sqrt"
+#model = 'real_tim_sqrt'
 iterations = 10  # Added iterations variable with default value of 10
 n_filter = 2
 

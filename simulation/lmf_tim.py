@@ -212,8 +212,8 @@ def run(data_dir = r"..\database\data",
 if __name__ == '__main__':
     run(
         data_dir     = r"..\database\data",
-        out_dir      = r"..\database\data_lmf_1.8_0.3_real_tim_sqrt",
-        alpha        = 1.8,
+        out_dir      = r"..\database\data_lmf_1.5_0.3_real_tim_lin",
+        alpha        = 1.5,
         n_traders    = None,
         lambda_lmf   = 0.3,
         volume_model = 'empirical',  # 'empirical' | 'mem_acd' | 'log_ar'
@@ -221,7 +221,7 @@ if __name__ == '__main__':
         mem_p        = 1,
         mem_q        = 1,
         beta         = 0.25,
-        delta        = 0.5,
+        delta        = 1.0,
         kernel_L     = 500,
         seed         = 42,
     )
