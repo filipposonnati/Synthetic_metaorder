@@ -128,8 +128,7 @@ def plot_run_length_distributions(
             
         plt.close(fig)
 
-def read_data():
-    data_dir = os.path.join('database', 'data')
+def read_data(data_dir = os.path.join('database', 'data')):
     paths    = listdir(data_dir)
 
     # Master dictionary to aggregate all run length counts across all files
@@ -160,30 +159,30 @@ def read_data():
 
 
 if __name__ == "__main__":
+    print('Generate real')
     rld = read_data()
+    print('Generate AR')
+    rld_ar = read_data(data_dir=os.path.join('database', 'data_ar_1000'))
 
     pooled     = np.load('database/acf_binary.npy')
     p_plus     = float(np.load('database/p_plus.npy'))
     median_len = int(np.load('database/median_len.npy'))
 
+    print('Generate gaussian')
     gaussian_signs, _ = generate_binary_sequence(pooled, p_plus=p_plus, N=10_000_000, n_realizations=1, seed=42)
     gaussian_rld = compute_run_length_distribution(gaussian_signs[0])
 
-    #lmf_signs = simulate_lmf(1.5, 4, 10_000_000)
-    #lmf_rld_4 = compute_run_length_distribution(lmf_signs)
+    print('Generate LMF')
+    lmf_signs = simulate_lmf(1.5, 100, 10_000_000)
+    lmf_rld_100 = compute_run_length_distribution(lmf_signs)
 
+    print('Generate LMF Lambda')
     lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.5, 0.3, 10_000_000)
     lmf_rld_lambda_15_03 = compute_run_length_distribution(lmf_signs_lambda)
 
-    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.8, 0.2, 10_000_000)
-    lmf_rld_lambda_18_02 = compute_run_length_distribution(lmf_signs_lambda)
-
-    lmf_signs_lambda, _, _ = simulate_lmf_lambda(1.8, 0.3, 10_000_000)
-    lmf_rld_lambda_18_03 = compute_run_length_distribution(lmf_signs_lambda)
-
     # Calling the method once handles plotting and saving both configurations with aligned ratio graphs
     plot_run_length_distributions(
-        distributions=[rld, gaussian_rld, lmf_rld_lambda_18_02, lmf_rld_lambda_15_03, lmf_rld_lambda_18_03],
-        labels=["Real Data", "Gaussian", r"LMF $\lambda$ = 0.2 $\alpha$ = 1.8", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.5", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.8"],
+        distributions=[rld, rld_ar, gaussian_rld, lmf_rld_lambda_15_03, lmf_rld_100],
+        labels=["Real Data", "AR", "Gaussian", r"LMF $\lambda$ = 0.3 $\alpha$ = 1.5", r"LMF N = 100 $\alpha$ = 1.5"],
         log_scale='both'
     )

@@ -104,7 +104,8 @@ def generate(delta_map: dict[str, int],
 
         for path in paths:
             trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
-            ar_trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
+            if signs_origin == "ar":
+                trades = pd.read_csv(f"{ar_data_dir}\\{path}", header=None)
 
             # ── Resolve signs for this (iteration, file) pair ────────────────
             if signs_origin == 'lmf':
@@ -116,7 +117,7 @@ def generate(delta_map: dict[str, int],
                     len(trades), p_plus=np.mean(np.array(trades[3])) + 0.5, N = 1_000_000
                 )
             elif signs_origin == 'ar':
-                raw = np.array(ar_trades[3])
+                raw = np.array(trades[3])
                 signs = np.where(raw > 0, 1, -1)
             elif signs_origin == '':
                 # Real signs: column 3 contains raw signs in {0,1} or {-1,+1};
@@ -154,11 +155,11 @@ def generate(delta_map: dict[str, int],
 if __name__ == '__main__':
     # ── Signs settings ───────────────────────────────────────────────────────
     iterations     = 10      # TARGET number of iterations to reach
-    signs_origin   = 'ar'  # 'lmf', 'gaussian', 'ar' or '' (real signs from data)
+    signs_origin   = ''  # 'lmf', 'gaussian', 'ar' or '' (real signs from data)
     
     lmf_alpha      = 1.5
     lmf_nb_traders = 10
-    lmf_lambda     = 0.32
+    lmf_lambda     = 0.3
 
     # ── Load configurations from CSV ─────────────────────────────────────────
     cfg_df = pd.read_csv('configurations.csv', comment="#")
