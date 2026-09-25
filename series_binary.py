@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
+import powerlaw
 
 # Import internal module 'methods' for trader mapping
 import methods
@@ -10,16 +10,6 @@ import methods
 # ---------------------------------------------------------------------------
 # 1. Main Functions & Fit Model
 # ---------------------------------------------------------------------------
-
-def log_exp_func(L, ln_A, lmbda):
-    """ Logarithmic exponential model: ln(P(L)) = ln(A) - lambda * L """
-    return ln_A - lmbda * L
-
-
-def exp_func(L, A, lmbda):
-    """ Standard exponential model for plotting: P(L) = A * exp(-lambda * L) """
-    return A * np.exp(-lmbda * L)
-
 
 def generate_correlated_binary_sequence(size: int, rho: float = 0.0) -> np.ndarray:
     """
@@ -99,14 +89,14 @@ if __name__ == '__main__':
         {'nb_traders': 2, 'kind': 'power', 'exponent': 2.0}
     ]
 
-    num_events = 10_000_000   
+    num_events = 1_000_000   
     num_runs   = 5           
     
     rho_configs = [
         #{'type': 'markov_1', 'rho1': 0.0, 'rho2': 0.0, 'label_file': 'markov_0'},
-        #{'type': 'markov_1', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_1'},
-        #{'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_2'},
-        {'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.25, 'label_file': 'markov_3'},
+        {'type': 'markov_1', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_1'},
+        {'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_2'},
+        #{'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.25, 'label_file': 'markov_3'},
     ]
 
     for cfg_rho in rho_configs:
@@ -144,9 +134,12 @@ if __name__ == '__main__':
             results[label] = np.concatenate(lengths_acc)
 
         # ---------------------------------------------------------------------------
-        # 3. Semi-Log Plot with Log-Space curve_fit & Saving
+        # 3. Semi-Log Plot con powerlaw & xmin Manuale
         # ---------------------------------------------------------------------------
         
+        # Scegli qui il valore di cut-off manuale per fittare solo la coda
+        XMIN_MANUALE = 15
+
         fig, ax = plt.subplots(figsize=(8, 6))
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
 
@@ -155,40 +148,50 @@ if __name__ == '__main__':
             pmf = counts / counts.sum()
             color = colors[idx % len(colors)]
 
-            # Scatter plot for distributions
+            # Scatter plot dei dati empirici
             ax.plot(values, pmf, 'o', linestyle='none', color=color, alpha=0.7, label=label)
 
-            # Fit EACH configuration in log-space using curve_fit
-            valid_mask = pmf > 0
-            x_data = values[valid_mask]
-            y_data_log = np.log(pmf[valid_mask])
-
-            # Initial guesses for ln(A) and lambda
-            p_same_theoretical = (1.0 + r1) / 2.0 if r1 > 0 else 0.5
-            lambda_theoretical = -np.log(p_same_theoretical)
-            p0 = [0.0, lambda_theoretical]  # ln(A) ~ 0 -> A ~ 1
-
-            popt, pcov = curve_fit(log_exp_func, x_data, y_data_log, p0=p0)
+            # 1. Fit esponenziale con xmin manuale
+            fit = powerlaw.Fit(lengths, discrete=True, xmin=XMIN_MANUALE, verbose=False)
             
-            ln_A_fit, lambda_fit = popt
-            A_fit = np.exp(ln_A_fit)
+            # 2. Estrazione del parametro lambda
+            lambda_fit = fit.exponential.parameter1
             
-            perr = np.sqrt(np.diag(pcov))
-            ln_A_err, lambda_err = perr
-            A_err = A_fit * ln_A_err  # Error propagation: delta(A) = A * delta(ln A)
+            # 3. Calcolo dell'incertezza sui dati effettivamente fittati (>= XMIN_MANUALE)
+            n_samples_tail = np.sum(lengths >= XMIN_MANUALE)
+            lambda_err = lambda_fit / np.sqrt(n_samples_tail) if n_samples_tail > 0 else 0.0
+            
+            # 4. Generazione della curva di fit a partire da XMIN_MANUALE
+            x_fit = np.linspace(XMIN_MANUALE, values.max(), 200)
+            
+            # Ancoraggio visivo della curva al valore reale della PMF in XMIN_MANUALE
+            idx_xmin = np.where(values == XMIN_MANUALE)[0]
+            p_xmin = pmf[idx_xmin[0]] if len(idx_xmin) > 0 else pmf[0]
+            y_fit = p_xmin * np.exp(-lambda_fit * (x_fit - XMIN_MANUALE))
 
-            # Fit curve evaluation
-            x_fit = np.linspace(values.min(), values.max(), 200)
-            y_fit = exp_func(x_fit, A_fit, lambda_fit)
+            # 5. Plot della curva di fit sulla coda
+            fit_label = f"Fit Tail Config {idx+1} (λ={lambda_fit:.3f}±{lambda_err:.3f}, $x_{{min}}$={XMIN_MANUALE})"
+            ax.plot(x_fit, y_fit, linestyle='--', color=color, linewidth=2.0, label=fit_label)
 
-            # Plot fit curve per configuration matching color
-            fit_label = f"Log-Fit Config {idx+1} (λ={lambda_fit:.4f}±{lambda_err:.4f})"
-            ax.plot(x_fit, y_fit, linestyle='--', color=color, linewidth=1.8, label=fit_label)
+            print(f"\n--- Powerlaw Manual Tail Fit Results for '{label}' ({file_tag}) ---")
+            print(f"Model          : Exponential Fit (MLE)")
+            print(f"xmin (manuale) : {XMIN_MANUALE}")
+            print(f"N (nella coda) : {n_samples_tail:,}")
+            print(f"λ              : {lambda_fit:.4f} ± {lambda_err:.4f}")
 
-            print(f"\n--- Log-space curve_fit Results for '{label}' ({file_tag}) ---")
-            print(f"Model: ln P(L) = ln A - λ * L")
-            print(f"A          = {A_fit:.6f} ± {A_err:.6f}")
-            print(f"λ          = {lambda_fit:.6f} ± {lambda_err:.6f}")
+        # Formatting Semi-Log Plot
+        ax.set_yscale('log')
+        ax.set_xlabel("Meta-order Length")
+        ax.set_ylabel("Probability $P(L)$")
+        ax.grid(True, which="both", ls="--", alpha=0.5)
+        ax.legend()
+
+        plt.tight_layout()
+        
+        filename = f"series_{file_tag}.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath, dpi=300)
+        print(f"\nFigure saved to '{filepath}'")
 
         # Formatting Semi-Log Plot
         ax.set_yscale('log')
