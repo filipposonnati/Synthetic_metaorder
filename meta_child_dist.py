@@ -187,9 +187,9 @@ def plot_all(name: str, configs: list[dict] = None, lmf_init_conf=None, comparis
         ax.legend(framealpha=0.4)
 
     plt.tight_layout()
-    output_dir = Path('images/meta_child_dist')
+    output_dir = Path(f'images/meta_child_dist')
     output_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_dir / f"{name}.png", dpi=300)
+    fig.savefig(output_dir / f'{name}{"_log" if x_log else ""}.png', dpi=300)
     plt.close()
 
 # ---------------------------------------------------------------------------
@@ -277,6 +277,73 @@ def compare_all_distributions_grid(base_dir: Path, real_subdir: str, configs: li
     print(f"[save] {out_path}")
     plt.show()
 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+def plot_trader_distributions(configuration: str, min_orders_per_trader: int = 10, x_log: bool = True) -> None:
+    """
+    Legge il file database/meta/meta_{configuration}.csv e calcola la distribuzione
+    della dimensione degli ordini (NbChild) separatamente per ciascun trader.
+    """
+    csv_path = Path("database") / "meta" / f"meta_{configuration}.csv"
+    
+    if not csv_path.exists():
+        raise FileNotFoundError(f"File CSV non trovato: '{csv_path}'")
+        
+    # Caricamento dei soli campi utili per ottimizzare la memoria
+    df = pd.read_csv(csv_path, usecols=['trader', 'NbChild'])
+    
+    # Raggruppamento per trader
+    grouped = df.groupby('trader')
+    
+    fig, (ax_pdf, ax_ccdf) = plt.subplots(1, 2, figsize=(13, 6))
+    
+    colors = plt.cm.tab20.colors
+    markers = ['o', 's', '^', 'D', 'v', 'P', 'X', '*']
+    
+    for i, (trader_id, group) in enumerate(grouped):
+        nb_child_data = group['NbChild'].values
+        
+        # Filtro per trader con un numero sufficiente di dati
+        if len(nb_child_data) < min_orders_per_trader:
+            continue
+            
+        x_vals, counts, ccdf = get_pdf_ccdf(nb_child_data)
+        
+        kw = dict(
+            ls='', 
+            marker=markers[i % len(markers)], 
+            ms=4, 
+            color=colors[i % len(colors)], 
+            alpha=0.8,
+            label=f'{trader_id}'
+        )
+        
+        ax_pdf.plot(x_vals, counts, **kw)
+        ax_ccdf.plot(x_vals, ccdf, **kw)
+
+    for ax, title, ylabel in [(ax_pdf, 'PDF', 'P(n)'), (ax_ccdf, 'CCDF', 'P(N ≥ n)')]:
+        if x_log:
+            ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('n')
+        ax.set_ylabel(ylabel)
+        #ax.set_title(f'{title} - Traders in Config: {configuration}')
+        ax.grid(True, lw=0.5, ls='--', alpha=0.6)
+        #ax.legend(fontsize=8, framealpha=0.4, loc='best')
+
+    plt.tight_layout()
+    
+    output_dir = Path('images/meta_child_dist')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / f"traders_{configuration}{'_log' if x_log else ''}.png"
+    
+    fig.savefig(out_path, dpi=300)
+    print(f"[save] Grafico salvato in: {out_path}")
+    plt.close()
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -291,6 +358,7 @@ if __name__ == '__main__':
     ]
 
     plot_all('meta_child_dist', configs=my_configs)
+    plot_all('meta_child_dist', configs=my_configs, x_log=True)
 
 
 
@@ -318,3 +386,10 @@ if __name__ == '__main__':
     # Esecuzione della comparazione su griglia filtrando per le stesse configurazioni
     compare_all_distributions_grid(BASE_DIR, REAL_SUBDIR, configs=my_configs)
     """
+
+    # Esempio: legge 'database/meta/meta_4_uniform.csv' o il nome esatto della configurazione
+    config_scelta = "20_power_2.0"
+    
+    # Esegui l'analisi per singolo trader
+    #plot_trader_distributions(config_scelta, min_orders_per_trader=20)
+    #plot_trader_distributions(config_scelta, min_orders_per_trader=20, x_log=False)

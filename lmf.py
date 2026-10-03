@@ -198,10 +198,16 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
  
     return order_flow, n_active, storico_metaordini
 
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.stattools import acf
+from scipy.optimize import curve_fit
+import warnings
+
 def plot(
     alphas,
     n_traders_list,
-    total_steps=100_000_000,
+    total_steps=10_000_000,
     max_lag=1000,
     fit_start_lag=25,
     save_path=None,
@@ -210,73 +216,96 @@ def plot(
     p_trade_random=0.0
 ):
     """
-    Run a grid study over multiple alpha values and numbers of traders.
+    Run specific paired simulations for fixed trader pool model:
+    Run i uses (alphas[i], n_traders_list[i], p_trade_random[i]).
+    Plots a theoretical power-law curve for each unique alpha value.
     """
-    n_alphas = len(alphas)
+    # Normalize inputs to lists of equal length
+    alpha_list = [alphas] if isinstance(alphas, (float, int)) else list(alphas)
+    trader_list = [n_traders_list] if isinstance(n_traders_list, (float, int)) else list(n_traders_list)
+    p_noise_list = [p_trade_random] if isinstance(p_trade_random, (float, int)) else list(p_trade_random)
+
+    n_runs = max(len(alpha_list), len(trader_list), len(p_noise_list))
+
+    # Pad lists if shorter than n_runs by repeating the last element
+    alpha_list += [alpha_list[-1]] * (n_runs - len(alpha_list))
+    trader_list += [trader_list[-1]] * (n_runs - len(trader_list))
+    p_noise_list += [p_noise_list[-1]] * (n_runs - len(p_noise_list))
+
     lags = np.arange(1, max_lag + 1)
     fit_slice = slice(fit_start_lag - 1, None)
-    colors = ['blue', 'red', 'green']
+    
+    #colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown']
 
-    fig, axes = plt.subplots(1, n_alphas, figsize=(7 * n_alphas, 6), sharey=False)
-    if n_alphas == 1:
-        axes = [axes]
+    fig, ax = plt.subplots(figsize=(8, 6))
+    results = []
 
-    results = {}
-
-    for ax, alpha in zip(axes, alphas):
-        results[alpha] = {}
+    for i in range(n_runs):
+        alpha = alpha_list[i]
+        n_traders = trader_list[i]
+        p_noise = p_noise_list[i]
         theoretical_gamma = alpha - 1
 
-        for color, n_traders in zip(colors, n_traders_list):
-            print(f"  Simulating alpha={alpha}, n_traders={n_traders} (dist={dist_type}, p_random={p_trade_random}) …")
-            flow = simulate_lmf(
-                alpha, 
-                n_traders, 
-                total_steps, 
-                dist_type=dist_type, 
-                dist_kwargs=dist_kwargs, 
-                p_trade_random=p_trade_random
+        #color = colors[i % len(colors)]
+        #ls = linestyles[i % len(linestyles)]
+
+        print(f"  Run {i+1}/{n_runs}: alpha={alpha}, N={n_traders}, p_noise={p_noise} (dist={dist_type}) …")
+        
+        flow = simulate_lmf(
+            alpha, 
+            n_traders, 
+            total_steps, 
+            dist_type=dist_type, 
+            dist_kwargs=dist_kwargs, 
+            p_trade_random=p_noise
+        )
+        auto_corr = acf(flow, nlags=max_lag, fft=True)
+
+        try:
+            popt, pcov = curve_fit(
+                power_law,
+                lags[fit_slice],
+                auto_corr[1:][fit_slice],
+                p0=[auto_corr[1], -theoretical_gamma],
+                maxfev=5000,
             )
-            auto_corr = acf(flow, nlags=max_lag, fft=True)
+        except RuntimeError:
+            popt, pcov = [np.nan, np.nan], np.full((2, 2), np.nan)
+            print(f"    Fit did not converge for Run {i+1}")
 
-            try:
-                popt, pcov = curve_fit(
-                    power_law,
-                    lags[fit_slice],
-                    auto_corr[1:][fit_slice],
-                    p0=[auto_corr[1], -theoretical_gamma],
-                    maxfev=5000,
-                )
-            except RuntimeError:
-                popt, pcov = [np.nan, np.nan], np.full((2, 2), np.nan)
-                print(f"    Fit did not converge for alpha={alpha}, n_traders={n_traders}")
+        results.append({
+            "alpha": alpha,
+            "n_traders": n_traders,
+            "p_noise": p_noise,
+            "acf": auto_corr,
+            "popt": popt,
+            "pcov": pcov,
+        })
 
-            results[alpha][n_traders] = {
-                "acf": auto_corr,
-                "popt": popt,
-                "pcov": pcov,
-            }
+        label = rf"Run {i+1}: $\alpha={alpha}$, $N={n_traders}$, $p_{{noise}}={p_noise}$"
+        ax.loglog(lags, auto_corr[1:], linestyle='-', label=label)
 
-            ax.loglog(
-                lags,
-                auto_corr[1:],
-                color=color,
-                label=f"$N={n_traders}$",
-            )
-            if not np.isnan(popt[0]):
-                ax.loglog(
-                    lags,
-                    power_law(lags, n_traders**(alpha - 2) / alpha, -alpha + 1),
-                    color=color,
-                    linestyle="--",
-                    linewidth=1,
-                )
+    # Plot theoretical power-law curve once for each unique alpha
+    unique_alphas = set(alpha_list)
+    for alpha_val in unique_alphas:
+        # Find the first run matching this alpha to scale the theoretical curve height
+        first_match_idx = alpha_list.index(alpha_val)
+        ref_acf = results[first_match_idx]["acf"]
+        theory = ref_acf[1] * lags ** (-(alpha_val - 1))
+        ax.loglog(
+            lags, 
+            theory, 
+            color='black', 
+            linestyle='--', 
+            linewidth=1.2, 
+            label=rf"$\tau^{{-{alpha_val-1:.2f}}}$"
+        )
 
-        ax.set_title(rf"$\alpha = {alpha}$  ($\gamma = \alpha-1 = {theoretical_gamma:.1f}$)")
-        ax.set_xlabel(r"Lag $\tau$")
-        ax.set_ylabel(r"ACF $C(\tau)$")
-        ax.legend(fontsize=8)
-        ax.grid(True, which="both", alpha=0.3)
+    #ax.set_title("Order Sign ACF (Paired Simulation Runs)")
+    ax.set_xlabel(r"Lag $\tau$")
+    ax.set_ylabel(r"ACF $C(\tau)$")
+    ax.legend(fontsize=8)
+    ax.grid(True, which="both", alpha=0.3)
 
     plt.tight_layout()
 
@@ -284,13 +313,15 @@ def plot(
         plt.savefig(save_path, dpi=150)
         print(f"Figure saved to {save_path}")
 
-    plt.show()
+    #plt.show()
+    plt.close()
     return results
 
+
 def plot_lambda(
-    alpha,
+    alphas,
     lambdas,
-    total_steps=100_000_000,
+    total_steps=10_000_000,
     max_lag=1000,
     fit_start_lag=25,
     save_path=None,
@@ -299,64 +330,107 @@ def plot_lambda(
     p_trade_random=0.0
 ):
     """
-    Run a grid study over multiple lambda values for the λ model.
+    Run specific paired simulations for the λ-model:
+    Run i uses (alphas[i], lambdas[i], p_trade_random[i]).
+    Plots a theoretical power-law curve for each unique alpha value.
     """
-    lam_c = (alpha - 1) / alpha if alpha > 1 else 0.5
-    lags  = np.arange(1, max_lag + 1)
-    colors = ['blue', 'red', 'green', 'orange']
- 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    results = {}
- 
-    for color, lam in zip(colors, lambdas):
-        print(f"  Simulating λ model: alpha={alpha}, lambda={lam} (dist={dist_type}, p_random={p_trade_random}) …")
-        flow, n_active, _ = simulate_lmf_lambda(
+    # Normalize inputs to lists of equal length
+    alpha_list = [alphas] if isinstance(alphas, (float, int)) else list(alphas)
+    lambda_list = [lambdas] if isinstance(lambdas, (float, int)) else list(lambdas)
+    p_noise_list = [p_trade_random] if isinstance(p_trade_random, (float, int)) else list(p_trade_random)
+
+    n_runs = max(len(alpha_list), len(lambda_list), len(p_noise_list))
+
+    # Pad lists if shorter than n_runs by repeating the last element
+    alpha_list += [alpha_list[-1]] * (n_runs - len(alpha_list))
+    lambda_list += [lambda_list[-1]] * (n_runs - len(lambda_list))
+    p_noise_list += [p_noise_list[-1]] * (n_runs - len(p_noise_list))
+
+    lags = np.arange(1, max_lag + 1)
+    #colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown']
+    #linestyles = ['-', '--', ':', '-.']
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    results = []
+
+    for i in range(n_runs):
+        alpha = alpha_list[i]
+        lam = lambda_list[i]
+        p_noise = p_noise_list[i]
+
+        #color = colors[i % len(colors)]
+        #ls = linestyles[i % len(linestyles)]
+
+        print(f"  Run {i+1}/{n_runs}: alpha={alpha}, lambda={lam}, p_noise={p_noise} (dist={dist_type}) …")
+        
+        flow, n_active, historico = simulate_lmf_lambda(
             alpha, 
             lam, 
             total_steps, 
             dist_type=dist_type, 
             dist_kwargs=dist_kwargs, 
-            p_trade_random=p_trade_random
+            p_trade_random=p_noise
         )
- 
-        acf_flow = acf(flow,     nlags=max_lag, fft=True)
-        acf_N    = acf(n_active, nlags=max_lag, fft=True)
- 
-        results[lam] = {"acf_flow": acf_flow, "acf_N": acf_N, "n_active": n_active}
- 
-        label = rf"$\lambda={lam}$"
-        ax1.loglog(lags, np.abs(acf_flow[1:]), color=color, label=label)
-        ax2.loglog(lags, np.abs(acf_N[1:]),    color=color, label=label)
- 
-    first_acf = results[lambdas[0]]["acf_flow"]
-    theory = first_acf[1] * lags ** (-(alpha - 1))
-    ax1.loglog(lags, theory, "k--", linewidth=1.5, label=rf"Theory $\tau^{{-{alpha-1:.2f}}}$")
-    ax2.loglog(lags, theory, "k--", linewidth=1.5, label=rf"Theory $\tau^{{-{alpha-1:.2f}}}$")
- 
-    for ax, title in zip(
-        [ax1, ax2],
-        [r"ACF of order signs $x_t$", r"ACF of active orders $N(t)$"],
-    ):
-        ax.set_title(rf"{title}  ($\alpha={alpha}$, $\lambda_c={lam_c:.3f}$)")
-        ax.set_xlabel(r"Lag $\tau$")
-        ax.set_ylabel(r"ACF")
-        ax.legend(fontsize=8)
-        ax.grid(True, which="both", alpha=0.3)
- 
+
+        acf_flow = acf(flow, nlags=max_lag, fft=True)
+        
+        results.append({
+            "alpha": alpha,
+            "lambda": lam,
+            "p_noise": p_noise,
+            "acf_flow": acf_flow,
+            "n_active": n_active,
+            "historico": historico
+        })
+
+        label = rf"Run {i+1}: $\alpha={alpha}$, $\lambda={lam}$, $p_{{noise}}={p_noise}$"
+        ax.loglog(lags, np.abs(acf_flow[1:]), linestyle='-', label=label)
+
+    # Plot theoretical power-law curve once for each unique alpha
+    unique_alphas = set(alpha_list)
+    for alpha_val in unique_alphas:
+        # Find the first run matching this alpha to scale the theoretical curve height
+        first_match_idx = alpha_list.index(alpha_val)
+        ref_acf = results[first_match_idx]["acf_flow"]
+        theory = ref_acf[1] * lags ** (-(alpha_val - 1))
+        ax.loglog(
+            lags, 
+            theory, 
+            color='black', 
+            linestyle='--', 
+            linewidth=1.2, 
+            label=rf"$\tau^{{-{alpha_val-1:.2f}}}$"
+        )
+
+    #ax.set_title(r"Order Sign ACF in $\lambda$-Model (Paired Runs)")
+    ax.set_xlabel(r"Lag $\tau$")
+    ax.set_ylabel(r"ACF $C(\tau)$")
+    ax.legend(fontsize=8)
+    ax.grid(True, which="both", alpha=0.3)
+
     plt.tight_layout()
- 
+
     if save_path:
         plt.savefig(save_path, dpi=150)
         print(f"Figure saved to {save_path}")
-    else:
-        plt.savefig('images\\lmf_lambda_model.png')
- 
+
+    #plt.show()
     plt.close()
     return results
 
 if __name__ == '__main__':
-    # Esecuzione standard (con p_trade_random=0.0 di default)
-    plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000)
+    plot_lambda(
+        alphas=[1.3, 1.5, 1.5, 1.5], 
+        lambdas=[0.2, 0.3, 0.3, 0.2], 
+        total_steps=10_000_000, 
+        p_trade_random=[0.0, 0.0, 0.1, 0.0],
+        save_path='images/lmf_lambda_comparison.png'
+    )
 
-    # Esempio con il 10% di transazioni casuali (p_trade_random = 0.1)
-    # plot_lambda(1.5, [0.2, 0.3], total_steps=10_000_000, p_trade_random=0.1)
+    plot(
+        alphas=[1.5, 1.5, 1.5, 1.5, 1.3], 
+        n_traders_list=[1, 10, 50, 10, 10], 
+        total_steps=10_000_000, 
+        p_trade_random=[0.0, 0.0, 0.0, 0.1, 0.0],
+        save_path='images/lmf_comparison.png'
+    )

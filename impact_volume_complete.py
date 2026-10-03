@@ -26,8 +26,9 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-model = "lmf_1.5_0.3_real_tim_lin"
+#model = "lmf_1.5_0.3_real_tim_lin"
 #model = 'real_reg'
+model = 'nn'
 
 dir = 'meta'
 if model != "":
@@ -50,8 +51,8 @@ path = 'meta_' + conf
 # ==========================================
 ranges_config = [
     {'min_val': 1,  'op': '>', 'label': r'$n > 1$',    'marker': 'o', 'color': 'tab:blue'},
-    {'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
-    {'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
+    #{'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
+    #{'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
 ]
 
 plt.figure(figsize=(10, 7))

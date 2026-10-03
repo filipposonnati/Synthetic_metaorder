@@ -7,7 +7,7 @@ import os
 from os import listdir
 import methods
 
-model = "var_reduced_1000"
+model = "nn"
 #model = 'real_tim_sqrt'
 iterations = 10  # Added iterations variable with default value of 10
 n_filter = 2
@@ -65,6 +65,7 @@ for path in paths:
     print(path)
     # Loop for the specified number of iterations per path/day
     for it in range(iterations):
+        print(it)
         meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
         meta = meta[meta['NbChild'] >= n_filter]
         l += len(meta)
