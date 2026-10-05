@@ -6,10 +6,11 @@ from scipy.stats import powerlaw
 import os
 from os import listdir
 import methods
+import gc
 
 model = "nn"
 #model = 'real_tim_sqrt'
-iterations = 10  # Added iterations variable with default value of 10
+iterations = 20  # Added iterations variable with default value of 10
 n_filter = 2
 
 data_dir = 'database\\data'
@@ -72,3 +73,6 @@ for path in paths:
 
         meta.to_csv(file_path, mode='a', index=False, header=first)
         first = False
+
+        del meta
+        gc.collect()

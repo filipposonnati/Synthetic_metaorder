@@ -5,8 +5,10 @@ import os
 from scipy.optimize import curve_fit
 
 # ==========================================
-# PLOT STYLING CONFIGURATION
+# FLAG & STYLING CONFIGURATION
 # ==========================================
+show_q_dist = True  # Flag to display Q distribution on the right axis
+
 plt.rcParams.update({
     'font.size': 12,
     'axes.titlesize': 18,
@@ -16,7 +18,7 @@ plt.rcParams.update({
     'legend.fontsize': 11
 })
 
-# Modello lineare per la scala logaritmica
+# Linear model for log-log scale fit
 def linear_model(log_x, slope, intercept):
     return slope * log_x + intercept
 
@@ -26,10 +28,7 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-#model = "lmf_1.5_0.3_real_tim_lin"
-#model = 'real_reg'
 model = 'nn'
-
 dir = 'meta'
 if model != "":
     dir = dir + "_" + model
@@ -50,12 +49,15 @@ path = 'meta_' + conf
 # DEFINE RANGES & PLOT SETUP
 # ==========================================
 ranges_config = [
-    {'min_val': 1,  'op': '>', 'label': r'$n > 1$',    'marker': 'o', 'color': 'tab:blue'},
+    {'min_val': 1, 'op': '>', 'label': r'$n > 1$', 'marker': 'o', 'color': 'tab:blue'},
     #{'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
     #{'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
 ]
 
-plt.figure(figsize=(10, 7))
+fig, ax1 = plt.subplots(figsize=(10, 7))
+
+# Create secondary y-axis (linear scale) if flag is active
+ax2 = ax1.twinx() if show_q_dist else None
 
 all_x_min = []
 all_x_max = []
@@ -66,6 +68,7 @@ for cfg in ranges_config:
         data_path = os.path.join(dir_path, path + '_' + str(cfg['min_val']) + '.csv')
     else:
         data_path = os.path.join(dir_path, path + '.csv')
+        
     synthetic_meta = pd.read_csv(
         data_path,
         sep=',',
@@ -81,8 +84,6 @@ for cfg in ranges_config:
     else:
         df_res = df_res[df_res['NbChild'] >= cfg['min_val']]
 
-    #df_res = df_res[df_res['NbChild'] <= cfg['max_val']]
-
     if df_res.empty:
         continue
 
@@ -92,6 +93,22 @@ for cfg in ranges_config:
     bins = np.logspace(np.log10(min_vol), np.log10(max_vol), 51)
 
     df_res['bin'] = pd.cut(df_res['MetaVolume'], bins=bins, include_lowest=True)
+
+    # BAR PLOT FOR Q FREQUENCY ON SECONDARY Y-AXIS (LINEAR SCALE)
+    if show_q_dist and ax2 is not None:
+        counts, bin_edges = np.histogram(df_res['MetaVolume'], bins=bins)
+        bin_widths = np.diff(bin_edges)
+        
+        ax2.bar(
+            bin_edges[:-1],
+            counts,
+            width=bin_widths,
+            align='edge',
+            color=cfg['color'],
+            edgecolor=cfg['color'],
+            alpha=0.5,
+            label=r'$Q$ Frequency'
+        )
 
     # 1. Aggregate ALL bins
     grouped_all = df_res.groupby('bin', observed=True).agg({
@@ -119,8 +136,8 @@ for cfg in ranges_config:
     all_x_min.append(np.min(x_data_all))
     all_x_max.append(np.max(x_data_all))
 
-    # Plot ALL binned data points
-    plt.plot(
+    # Plot ALL binned data points on ax1
+    ax1.plot(
         x_data_all,
         y_data_all,
         linestyle='',
@@ -142,30 +159,23 @@ for cfg in ranges_config:
         y_std = grouped_high_freq['MetaImpact_std'].values
         counts = grouped_high_freq['sample_count'].values
 
-        # Incertezza della media (Standard Error of Mean = std / sqrt(N))
         x_sem = np.where(counts > 1, x_std / np.sqrt(counts), 1e-8)
         y_sem = np.where(counts > 1, y_std / np.sqrt(counts), 1e-8)
 
-        # Trasformazione nello spazio logaritmico
         log_x = np.log10(x_fit_data)
         log_y = np.log10(y_fit_data)
 
-        # Incertezza propagata in log10: d(log10(z)) = dz / (z * ln(10))
         sigma_log_x = x_sem / (x_fit_data * np.log(10))
         sigma_log_y = y_sem / (y_fit_data * np.log(10))
 
-        # Evita errori zero o negativi
         sigma_log_x = np.maximum(sigma_log_x, 1e-6)
         sigma_log_y = np.maximum(sigma_log_y, 1e-6)
 
-        # Passaggio 1: Fit preliminare per stimare il coefficiente angolare (slope)
         p0_fit, _ = curve_fit(linear_model, log_x, log_y, sigma=sigma_log_y, absolute_sigma=True)
         slope_approx = p0_fit[0]
 
-        # Passaggio 2: Calcolo Errore Efficace nello spazio logaritmico
         sigma_eff_log = np.sqrt(sigma_log_y**2 + (slope_approx * sigma_log_x)**2)
 
-        # Passaggio 3: Fit finale con curve_fit usando gli errori efficaci
         popt, pcov = curve_fit(
             linear_model,
             log_x,
@@ -175,25 +185,21 @@ for cfg in ranges_config:
         )
 
         slope, intercept = popt
-        # Errore sui parametri di best fit (deviazione standard = radice dei valori diagonali della matrice di covarianza)
         perr = np.sqrt(np.diag(pcov))
         slope_err, intercept_err = perr[0], perr[1]
 
-        # Stampa a schermo degli errori sui parametri
         print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f}")
 
-        # Grid per tracciare il fit
         x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
         y_fit = (10**intercept) * (x_fit**slope)
 
-        # Plot linea di fit
-        plt.plot(
+        ax1.plot(
             x_fit,
             y_fit,
             linestyle='--',
             linewidth=1.8,
             color=cfg['color'],
-            label=f"Fit {cfg['label']}: ${slope:.3f} \pm {slope_err:.3f}$"
+            label=f"Fit {cfg['label']}: ${slope:.3f} \\pm {slope_err:.3f}$"
         )
 
 # ==========================================
@@ -205,7 +211,7 @@ if all_x_min and all_x_max:
     x_ref = np.logspace(np.log10(global_x_min), np.log10(global_x_max), 100)
     y_ref = x_ref**0.5
 
-    plt.plot(
+    ax1.plot(
         x_ref,
         y_ref,
         linestyle='-',
@@ -214,21 +220,33 @@ if all_x_min and all_x_max:
         label=r'$\sqrt{Q}$'
     )
 
-# Formatting
-#plt.xlim([10**-5, 5 * 10**-3])
-#plt.ylim([10**-3, 10**-1])
+# Formatting (English labels)
+ax1.set_xscale('log')
+ax1.set_yscale('log')
+ax1.set_xlabel(r'$Q$')
+ax1.set_ylabel(r'$I$', color='black')
+ax1.grid(True, which="both", ls="-", alpha=0.2)
 
-plt.xscale('log')
-plt.yscale('log')
-plt.xlabel(r'$Q$')
-plt.ylabel(r'$I$')
-plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
-plt.grid(True, which="both", ls="-", alpha=0.2)
+if show_q_dist and ax2 is not None:
+    ax2.set_yscale('linear')  # Linear Y-axis for frequency counts
+    ax2.set_ylabel('Frequency', color='black')
+    ax2.tick_params(axis='y', labelcolor='black')
+
+# Unified legend for both axes
+lines_1, labels_1 = ax1.get_legend_handles_labels()
+if show_q_dist and ax2 is not None:
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left', bbox_to_anchor=(1.12, 1), frameon=True)
+else:
+    ax1.legend(lines_1, labels_1, loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+
 plt.tight_layout()
+
 if model == '':
     filepath = os.path.join(output_dir, conf + '.png')
 else:
     filepath = os.path.join(output_dir, model + '_' + conf + '.png')
+
 plt.savefig(filepath, bbox_inches='tight')
 print(f'Saved single fitted figure to: {filepath}')
 plt.close()

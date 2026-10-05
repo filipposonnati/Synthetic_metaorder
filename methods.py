@@ -166,7 +166,9 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
     sorted_trades['Ratio'] = sorted_trades['PartialImpact'] / np.sqrt(sorted_trades['MetaVolume'])
     sorted_trades['Ratio_pre'] = sorted_trades['PartialImpact_pre'] / np.sqrt(sorted_trades['MetaVolume'])
 
-    sorted_trades.drop(columns=['EndTime', 'day', 'EndTransactionTime'], inplace=True)
+    for col in ['EndTime', 'day', 'EndTransactionTime']:
+        if col in sorted_trades.columns:
+            del sorted_trades[col]
 
     metaorders_agg['MetaImpact'] = (metaorders_agg['EndMid'] - metaorders_agg['BeginMid']) * metaorders_agg['sign']
 
