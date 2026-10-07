@@ -197,15 +197,15 @@ def run(data_dir=DEFAULT_DATA_DIR,
 if __name__ == "__main__":
     run(
         data_dir=DEFAULT_DATA_DIR,
-        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_real_tim_sqrt",
+        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_real_reg_lin",
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
         volume_model="empirical",   # 'empirical' | 'mem_acd' | 'log_ar'
-        price_model="tim",          # 'regression' | 'tim'
+        price_model="regression",          # 'regression' | 'tim'
         vol_lags_for_ret=1000,
         beta=0.25,
-        delta=0.5,
+        delta=1.0,
         kernel_L=500,
         impact_lag=1,
         tick_size=None,

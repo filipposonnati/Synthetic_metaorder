@@ -52,9 +52,21 @@ for path in paths:
     )
     """
 
+    """
     results = var_fit(r, v, p = p)
     
     prices_sim, volumes_sim, r_sim = simulate_var(
+        results,
+        n_steps=len(r),
+        initial_v=initial_v,
+        initial_r=initial_r,
+        initial_price=initial_price
+    )
+    """
+
+    results = var_reduced_fit(r, v, p = p)
+    
+    prices_sim, volumes_sim, r_sim = simulate_var_reduced(
         results,
         n_steps=len(r),
         initial_v=initial_v,
