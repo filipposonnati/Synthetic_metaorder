@@ -28,7 +28,8 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_complete')
 os.makedirs(output_dir, exist_ok=True)
 
-model = 'nn'
+#model = 'lmf_1.5_0.3_real_tim_lin'
+model = 'var_1000'
 dir = 'meta'
 if model != "":
     dir = dir + "_" + model

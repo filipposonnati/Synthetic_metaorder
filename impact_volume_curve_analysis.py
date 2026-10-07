@@ -1,3 +1,4 @@
+import gc
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -67,7 +68,7 @@ def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
         # Back-transform parameters to physical power-law terms
         delta = slope
         delta_err = slope_err
-        
+
         Y = 10**intercept
         Y_err = np.log(10) * Y * intercept_err
 
@@ -76,24 +77,23 @@ def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
         return None
 
 def bin_data(df, n_bins=51):
-    """Common logic to bin MetaVolume and calculate stats."""
+    """Common logic to bin MetaVolume and calculate stats (senza copiare il dataframe)."""
     v_min, v_max = df['MetaVolume'].min(), df['MetaVolume'].max()
     if v_min <= 0 or v_max <= 0 or v_min == v_max:
         return None
 
     bins = np.logspace(np.log10(v_min), np.log10(v_max), n_bins)
-    df = df.copy()
-    df['bin'] = pd.cut(df['MetaVolume'], bins=bins, include_lowest=True)
 
-    grouped = df.groupby('bin', observed=True).agg({
-        'MetaVolume': ['mean', 'std', 'count'],
-        'MetaImpact': ['mean', 'std']
-    }).dropna()
+    # I bin vengono calcolati su una Series: nessun df.copy() con colonna aggiuntiva
+    bin_idx = pd.cut(df['MetaVolume'], bins=bins, include_lowest=True)
 
-    grouped.columns = [
-        'MetaVolume_mean', 'MetaVolume_std', 'sample_count',
-        'MetaImpact_mean', 'MetaImpact_std'
-    ]
+    grouped = df.groupby(bin_idx, observed=True).agg(
+        MetaVolume_mean=('MetaVolume', 'mean'),
+        MetaVolume_std=('MetaVolume', 'std'),
+        sample_count=('MetaVolume', 'count'),
+        MetaImpact_mean=('MetaImpact', 'mean'),
+        MetaImpact_std=('MetaImpact', 'std'),
+    ).dropna()
 
     return grouped, bins
 
@@ -104,114 +104,72 @@ def load_model_data(model, file_name_con_estensione, min_child=2):
         path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}_{min_child}")
     else:
         path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}")
-    data = pd.read_csv(path)
-    return data[data['NbChild'] >= min_child].copy()
+    # Legge solo le colonne necessarie
+    data = pd.read_csv(path, usecols=['NbChild', 'MetaVolume', 'MetaImpact'])
+    return data[data['NbChild'] >= min_child]
 
 def model_display_name(model):
     """Human-readable label for a model string."""
     return "Real data" if model == '' else model
 
+def process_model(model, file_name_con_estensione, min_child, n_bins):
+    """
+    Carica, binna e fitta UNA configurazione. Restituisce solo il record leggero
+    (grouped, grouped_fit, fit) oppure None. Il dataframe grezzo vive solo qui
+    dentro e viene rilasciato all'uscita dalla funzione.
+    """
+    label_base = model_display_name(model)
+    try:
+        df = load_model_data(model, file_name_con_estensione, min_child)
+    except FileNotFoundError:
+        print(f"[WARNING] File not found for model='{model}', skipping.")
+        return None
+    except Exception as e:
+        print(f"[WARNING] Could not load model='{model}': {e}, skipping.")
+        return None
 
-def plot_aggregate_impact(df, image_name, n_bins=51):
-    """Single aggregate plot with full fit params (Y and delta) in the legend."""
     res = bin_data(df, n_bins)
-    if res is None:
-        return
-    grouped, bins = res
 
-    # Filter high-frequency bins for fitting (exact condition from impact_volume_complete.py)
+    # Libera subito il dataframe grezzo: serve solo il risultato del binning
+    del df
+    gc.collect()
+
+    if res is None:
+        print(f"[WARNING] Binning failed for model='{model}', skipping.")
+        return None
+    grouped, _ = res
+
     max_samples = grouped['sample_count'].max()
     grouped_high_freq = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
 
-    fit = None
-    if not grouped_high_freq.empty and len(grouped_high_freq) > 2:
-        fit = robust_power_law_fit(
-            grouped_high_freq['MetaVolume_mean'].values,
-            grouped_high_freq['MetaImpact_mean'].values,
-            grouped_high_freq['MetaVolume_std'].values,
-            grouped_high_freq['MetaImpact_std'].values,
-            grouped_high_freq['sample_count'].values
-        )
+    if grouped_high_freq.empty or len(grouped_high_freq) <= 2:
+        print(f"[{label_base}] Not enough high frequency bins, skipping.")
+        return None
 
-    fig, ax1 = plt.subplots(figsize=(8, 6))
-    ax2 = ax1.twinx()
-    ax1.set_xscale("log")
-    ax1.set_yscale("log")
-    ax1.set_xlabel(r'$Q$')
-    ax1.set_ylabel(r'$I(Q)$')
-    ax2.set_ylabel('Frequency')
-
-    ax2.hist(df['MetaVolume'], bins=bins, color='lightgrey', alpha=0.6)
-
-    # Pre-calculate SEM for exact plotting of uncertainties
-    x_sem = np.where(grouped['sample_count'] > 1, grouped['MetaVolume_std'] / np.sqrt(grouped['sample_count']), 1e-8)
-    y_sem = np.where(grouped['sample_count'] > 1, grouped['MetaImpact_std'] / np.sqrt(grouped['sample_count']), 1e-8)
-
-    ax1.errorbar(
-        grouped['MetaVolume_mean'], grouped['MetaImpact_mean'],
-        xerr=x_sem, yerr=y_sem,
-        marker='o', linestyle='', color='C0', label='Binned data'
+    fit = robust_power_law_fit(
+        grouped_high_freq['MetaVolume_mean'].values,
+        grouped_high_freq['MetaImpact_mean'].values,
+        grouped_high_freq['MetaVolume_std'].values,
+        grouped_high_freq['MetaImpact_std'].values,
+        grouped_high_freq['sample_count'].values
     )
 
-    if fit:
-        Y, delta, Y_err, delta_err = fit
-        x_line = np.logspace(
-            np.log10(grouped_high_freq['MetaVolume_mean'].min()),
-            np.log10(grouped_high_freq['MetaVolume_mean'].max()), 100
-        )
-        fit_label = rf'$Y={Y:.2e} \pm {Y_err:.2e},\ \delta={delta:.3f} \pm {delta_err:.3f}$'
-        ax1.plot(x_line, Y * (x_line**delta), 'k--', label=fit_label)
-        print(f"Aggregate Fit: Y={Y:.4e} ± {Y_err:.4e}, delta={delta:.4f} ± {delta_err:.4f}")
+    if fit is None:
+        print(f"[{label_base}] Fit failed, skipping.")
+        return None
 
-    ax1.legend(loc='upper left', fontsize=10)
-    ax1.grid(True, which='major', linewidth=1.0, alpha=0.7)
-    plt.tight_layout()
-    plt.savefig(os.path.join('images', f'{image_name}.png'), dpi=150, bbox_inches='tight')
-    plt.close()
+    return dict(model=model, label=label_base, grouped=grouped, grouped_fit=grouped_high_freq, fit=fit)
 
 
 def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
-                              n_bins=51, vertical_shift=10.0):
+                              n_bins=51, vertical_shift=10.0, min_child=2):
     """Comparison plot with datasets shifted vertically."""
     records = []
 
     for model in models:
-        label_base = model_display_name(model)
-        try:
-            df = load_model_data(model, file_name_con_estensione)
-        except FileNotFoundError:
-            print(f"[WARNING] File not found for model='{model}', skipping.")
-            continue
-        except Exception as e:
-            print(f"[WARNING] Could not load model='{model}': {e}, skipping.")
-            continue
-
-        res = bin_data(df, n_bins)
-        if res is None:
-            print(f"[WARNING] Binning failed for model='{model}', skipping.")
-            continue
-        grouped, _ = res
-
-        max_samples = grouped['sample_count'].max()
-        grouped_high_freq = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
-
-        if grouped_high_freq.empty or len(grouped_high_freq) <= 2:
-            print(f"[{label_base}] Not enough high frequency bins, skipping.")
-            continue
-
-        fit = robust_power_law_fit(
-            grouped_high_freq['MetaVolume_mean'].values,
-            grouped_high_freq['MetaImpact_mean'].values,
-            grouped_high_freq['MetaVolume_std'].values,
-            grouped_high_freq['MetaImpact_std'].values,
-            grouped_high_freq['sample_count'].values
-        )
-
-        if fit is None:
-            print(f"[{label_base}] Fit failed, skipping.")
-            continue
-
-        records.append(dict(model=model, label=label_base, grouped=grouped, grouped_fit=grouped_high_freq, fit=fit))
+        rec = process_model(model, file_name_con_estensione, min_child, n_bins)
+        if rec is not None:
+            records.append(rec)
 
     if not records:
         print("[ERROR] No models could be fitted; aborting comparison plot.")
@@ -222,7 +180,7 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     n = len(records)
     palette = cm.tab10(np.linspace(0, 1, max(n, 1)))
 
-    fig, ax1 = plt.subplots(figsize=(10, 7))
+    fig, ax1 = plt.subplots(figsize=(10, 12))
     ax1.set_xscale("log")
     ax1.set_yscale("log")
     ax1.set_xlabel(r'$Q$')
@@ -261,7 +219,12 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
 
     print("-" * 50)
 
-    ax1.legend(loc='upper left', fontsize=10, bbox_to_anchor=(1.02, 1))
+    ax1.legend(
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.18),
+        fontsize=10,
+        ncol=2  # Dispone le voci della legenda su 2 colonne
+    )
     ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
     plt.tight_layout()
     plt.savefig(os.path.join('images', f'{image_name}.png'), dpi=150, bbox_inches='tight')
@@ -273,9 +236,7 @@ if __name__ == "__main__":
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    models = ['', 'ar_1000', 'var_1000', 'delta_0.5_1000', 'lmf_1.8_0.3_mem_tim_sqrt']
-
-    _orig_load_model_data = load_model_data
+    models = ['', 'nn', 'reg_delta_1.0_1000', 'reg_delta_0.5_1000', 'reg_delta_0.0_1000', 'lmf_1.5_0.3_real_tim_sqrt', 'lmf_1.5_0.3_real_tim_lin', 'real_reg_lin', 'real_reg_sqrt', 'real_tim_sqrt', 'real_tim_lin']
 
     target_dir = "impact_volume_curve_analysis"
     min_child = 2
@@ -286,30 +247,12 @@ if __name__ == "__main__":
 
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    load_model_data = lambda m, f, mc=min_child: _orig_load_model_data(m, f, min_child=min_child)
-
     img_comparison = f"{target_dir}/{function_clean}_comparison"
-    print(f"\n[GENERAZIONE] Grafico di confronto complessivo: images/{img_comparison}.png")
+    print(f"Grafico di confronto complessivo: images/{img_comparison}.png")
     plot_aggregate_comparison(
         file_name_con_estensione,
         models=models,
         image_name=img_comparison,
         vertical_shift=10.0,
+        min_child=min_child,
     )
-
-    exit()
-
-    for model in models:
-        label = model_display_name(model)
-        img_prefix = f"{model + '_' if model else ''}"
-        nome_img_aggregato = f"{target_dir}/{img_prefix}{function_clean}"
-
-        try:
-            df_clean = load_model_data(model, file_name_con_estensione, min_child)
-            print(f" └─ [{label}] Generazione plot individuale: images/{nome_img_aggregato}.png")
-            plot_aggregate_impact(df_clean, nome_img_aggregato)
-        except Exception as e:
-            print(f" └─ [{label}] ERRORE: {e}")
-
-    load_model_data = _orig_load_model_data
-    print("\n[FINISH] Tutte le analisi sono state completate con successo.")

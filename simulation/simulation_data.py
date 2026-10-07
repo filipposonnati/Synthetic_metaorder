@@ -10,21 +10,16 @@ from pathlib import Path
 import os
 
 from utils import clear_data, open_data, save_simulated_data
-from ar import ar_fit, simulate_ar
 from var import var_fit, simulate_var
 from var_reduced import var_reduced_fit, simulate_var_reduced
-from delta import (
-    power_transform,
-    delta_fit_fixed,
-    simulate_delta_fixed,
-)
-from sign_impact import sign_impact_fit, simulate_sign_impact
+from regression_delta import impact_simulate, impact_fit
 
 paths = np.array(listdir('..\\database\\data'))
 
 p = 1000
+delta = 0.0
 
-name = f'ver_reduced_1000'
+name = f'reg_delta_{delta}_{p}'
 
 dir = 'database\\data_' + name
 
@@ -46,9 +41,20 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p]  # Prezzo reale al punto p
 
-    results = var_reduced_fit(r, v, p = p)
+    """
+    results = impact_fit(r, v, delta = delta, p = p)
 
-    prices_sim, volumes_sim, r_sim = simulate_var_reduced(
+    prices_sim, volumes_sim, r_sim = impact_simulate(
+        results,
+        n_steps=len(r),
+        initial_v=initial_v,
+        initial_price=initial_price
+    )
+    """
+
+    results = var_fit(r, v, p = p)
+    
+    prices_sim, volumes_sim, r_sim = simulate_var(
         results,
         n_steps=len(r),
         initial_v=initial_v,

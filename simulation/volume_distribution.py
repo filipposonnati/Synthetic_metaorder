@@ -10,7 +10,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from statsmodels.tsa.stattools import acf
 
-import lmf_tim as lt
+import simulation.lmf_synthetic_market as lt
 
 # Distribuzioni candidate (loc=0 fissato)
 CANDIDATES = {

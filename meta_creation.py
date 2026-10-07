@@ -8,9 +8,10 @@ from os import listdir
 import methods
 import gc
 
-model = "nn"
-#model = 'real_tim_sqrt'
-iterations = 20  # Added iterations variable with default value of 10
+#model = "real_reg_sqrt"
+#model = 'lmf_1.5_0.3_real_tim_lin'
+model = 'var_1000'
+iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
 
 data_dir = 'database\\data'
@@ -66,7 +67,7 @@ for path in paths:
     print(path)
     # Loop for the specified number of iterations per path/day
     for it in range(iterations):
-        print(it)
+        print(it + 1)
         meta, _ = methods.generate(path, nb_traders, kind, exponent, l, data_dir)
         meta = meta[meta['NbChild'] >= n_filter]
         l += len(meta)
