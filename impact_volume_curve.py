@@ -1,126 +1,253 @@
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-from os import listdir
+import pandas as pd
+import os
 from scipy.optimize import curve_fit
-import re
 
-def power_law(x, a, delta):
-    return a * x**delta
+# ==========================================
+# FLAG & STYLING CONFIGURATION
+# ==========================================
+show_q_dist = True  # Flag to display Q distribution on the right axis
 
 plt.rcParams.update({
-    'font.size': 12,          # Dimensione base per tutto il testo
-    'axes.titlesize': 20,     # Titolo
-    'axes.labelsize': 16,     # Etichette assi
-    'xtick.labelsize': 12,    # Numeri asse X
-    'ytick.labelsize': 12,    # Numeri asse Y
-    'legend.fontsize': 14     # Legenda
+    'font.size': 12,
+    'axes.titlesize': 18,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 11
 })
 
-def get_marker(kind):
-    if kind == 'power':
-        return '.'
-    elif kind == 'uniform':
-        return 'x'
-    else:
-        return 'x'
+# Linear model for log-log scale fit
+def linear_model(log_x, slope, intercept):
+    return slope * log_x + intercept
 
-model = ""
+# ==========================================
+# OUTPUT & DATA LOADING
+# ==========================================
+output_dir = os.path.join('images', 'impact_volume_complete')
+os.makedirs(output_dir, exist_ok=True)
 
-dir = 'database\\meta'
+#model = 'lmf_1.5_0.3_real_tim_lin'
+model = 'var_1000'
+dir = 'meta'
 if model != "":
     dir = dir + "_" + model
 
-paths = np.array(listdir(dir))
+dir_path = os.path.join('database', dir)
+nb_traders = 20
+kind = 'power'
+exponent = 2.0
 
-fig = plt.figure(figsize=(8, 6))
+if kind == 'uniform':
+    conf = f'{nb_traders}_{kind}'
+else:
+    conf = f'{nb_traders}_{kind}_{exponent}'
 
-cmap = plt.get_cmap('tab10')
+path = 'meta_' + conf
 
-image_name = 'impact_volume_curve'
-if model != "":
-    image_name = image_name + "_" + model
+# ==========================================
+# DEFINE RANGES & PLOT SETUP
+# ==========================================
+ranges_config = [
+    {'min_val': 1, 'op': '>', 'label': r'$n > 1$', 'marker': 'o', 'color': 'tab:blue'},
+    #{'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
+    #{'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
+]
 
-# Pattern Breakdown:
-# meta_             : Matches literal prefix
-# (                 : Start alternation
-#   (?P<num_one>1)  : Case A: The number is exactly 1 (and nothing follows)
-#   |               : OR
-#   (?P<num_others>\d+)_(?P<kind>\w+?)(?:_(?P<exp>[\d.]+))? : Case B: Other numbers + kind + opt. exp
-# )                 : End alternation
-# \.csv             : Matches file extension
-pattern = r"meta_(?:(?P<num_one>1)|(?P<num_others>\d+)_(?P<kind>\w+?)(?:_(?P<exp>[\d.]+))?)\.csv"
+fig, ax1 = plt.subplots(figsize=(10, 7))
 
-for i, path in enumerate(paths):
-    match = re.search(pattern, path)
-    num_traders = match.group('num_one') or match.group('num_others')
-    kind = match.group('kind') if match.group('kind') else ""
-    exp = match.group('exp') if match.group('exp') else ""
+# Create secondary y-axis (linear scale) if flag is active
+ax2 = ax1.twinx() if show_q_dist else None
 
-    parts = [str(num_traders), kind, exp]
-    label = " ".join(filter(None, parts))
+all_x_min = []
+all_x_max = []
 
+# Loop over each range, bin the data, compute log-log fit, and plot
+for cfg in ranges_config:
+    if os.path.exists(os.path.join(dir_path, path + '_' + str(cfg['min_val']) + '.csv')):
+        data_path = os.path.join(dir_path, path + '_' + str(cfg['min_val']) + '.csv')
+    else:
+        data_path = os.path.join(dir_path, path + '.csv')
+        
     synthetic_meta = pd.read_csv(
-        f'{dir}\\{path}', 
-        sep=',',  # Usa il tabulatore (o cambia in ',' se il tuo file è un CSV standard)
-        parse_dates=['BeginTime', 'EndTime'] # Carica queste colonne come datetime
+        data_path,
+        sep=',',
+        parse_dates=['BeginTime', 'EndTime']
     )
 
-    # 1. Preparazione del DataFrame
-    synthetic_meta['NbChild'] = pd.to_numeric(synthetic_meta['NbChild'], errors='coerce')
+    synthetic_meta = synthetic_meta[synthetic_meta['MetaVolume'] > 0]
 
-    df_res = synthetic_meta[['MetaVolume', 'MetaImpact', 'NbChild']].copy()
-    df_res = df_res[df_res['NbChild'] > 1]
+    df_res = synthetic_meta[['MetaVolume', 'DailyVolume', 'TradedVolume', 'NbChild', 'MetaImpact']].copy()
 
-    df_res.drop(columns=['NbChild'], inplace=True)
+    if cfg['op'] == '>':
+        df_res = df_res[df_res['NbChild'] > cfg['min_val']]
+    else:
+        df_res = df_res[df_res['NbChild'] >= cfg['min_val']]
 
-    # 2. Creazione dei Bin Logaritmici
-    # Determiniamo il range
+    if df_res.empty:
+        continue
+
+    # Global logarithmic binning for the range
     min_vol = df_res['MetaVolume'].min()
     max_vol = df_res['MetaVolume'].max()
+    bins = np.logspace(np.log10(min_vol), np.log10(max_vol), 51)
 
-    # Creiamo 51 punti (per 50 bin) equidistanti nello spazio logaritmico
-    bins = np.logspace(np.log10(min_vol), np.log10(max_vol), 101)
-
-    # 3. Assegnazione dei metaordini ai Bin
-    # 'include_lowest=True' assicura che il valore minimo sia incluso.
     df_res['bin'] = pd.cut(df_res['MetaVolume'], bins=bins, include_lowest=True)
 
-    # 4. Raggruppamento e Calcolo delle Medie
-    # 'observed=True' è consigliato per le versioni recenti di Pandas quando si raggruppa con pd.cut
-    grouped = df_res.groupby('bin', observed=True).agg({
-        'MetaVolume': ['mean', 'std'], # Volume medio per rappresentare il centro del bin
-        'MetaImpact': ['mean', 'std', 'count']  # Impatto medio sul prezzo
-    }).dropna() # Rimuove i bin che non contengono dati
+    # BAR PLOT FOR Q FREQUENCY ON SECONDARY Y-AXIS (LINEAR SCALE)
+    if show_q_dist and ax2 is not None:
+        counts, bin_edges = np.histogram(df_res['MetaVolume'], bins=bins)
+        bin_widths = np.diff(bin_edges)
+        
+        ax2.bar(
+            bin_edges[:-1],
+            counts,
+            width=bin_widths,
+            align='edge',
+            color=cfg['color'],
+            edgecolor=cfg['color'],
+            alpha=0.5,
+            label=r'$Q$ Frequency'
+        )
 
-    grouped.columns = ['MetaVolume_mean', 'MetaVolume_std', 'MetaImpact_mean', 'MetaImpact_std', 'sample_count']
+    # 1. Aggregate ALL bins
+    grouped_all = df_res.groupby('bin', observed=True).agg({
+        'MetaVolume': ['mean', 'std', 'count'],
+        'MetaImpact': ['mean', 'std']
+    }).dropna()
 
-    # 5. Estrazione degli Array di Risultato
-    x = grouped['MetaVolume_mean'].to_numpy()
-    y = grouped['MetaImpact_mean'].to_numpy()
+    grouped_all.columns = [
+        'MetaVolume_mean', 'MetaVolume_std', 'sample_count',
+        'MetaImpact_mean', 'MetaImpact_std'
+    ]
 
-    x_err = grouped['MetaVolume_std'].to_numpy() / np.sqrt(grouped['sample_count'].to_numpy())
-    y_err = grouped['MetaImpact_std'].to_numpy() / np.sqrt(grouped['sample_count'].to_numpy())
+    grouped_all = grouped_all[
+        (grouped_all['MetaVolume_mean'] > 0) & 
+        (grouped_all['MetaImpact_mean'] > 0)
+    ]
 
-    #print(len(x))
-    #print(len(y))
+    if grouped_all.empty:
+        continue
 
-    #print(f'path: {path}')
+    # Extract all binned points for plotting
+    x_data_all = grouped_all['MetaVolume_mean'].values
+    y_data_all = grouped_all['MetaImpact_mean'].values
 
-    color = cmap(i % 10)
+    all_x_min.append(np.min(x_data_all))
+    all_x_max.append(np.max(x_data_all))
 
-    plt.plot(x, y, linestyle="", marker=get_marker(kind), color=color, label = f"{label}")
+    # Plot ALL binned data points on ax1
+    ax1.plot(
+        x_data_all,
+        y_data_all,
+        linestyle='',
+        marker=cfg['marker'],
+        markersize=6,
+        color=cfg['color'],
+        label=f"Data {cfg['label']}"
+    )
 
-x_theoretical = np.linspace(1e-6, 1e-3, 2)
-#plt.plot(x_theoretical, np.sqrt(x_theoretical), label=r'$y = \sqrt{x}$', linestyle=':', color = "black")
-#plt.plot(x_theoretical, x_theoretical, label=r'$y = x$', linestyle='-.', color = "black")
+    # 2. Filter for HIGH-FREQUENCY bins only (used exclusively for fitting)
+    max_samples = grouped_all['sample_count'].max()
+    grouped_high_freq = grouped_all[grouped_all['sample_count'] > 0.5 * max_samples].copy()
 
-plt.xscale("log")
-plt.yscale("log")
-plt.xlabel(r'$Q$')
-plt.ylabel(r'$I(Q)$')
-plt.legend()
-plt.grid(True, which="both", ls="-")
+    if not grouped_high_freq.empty and len(grouped_high_freq) > 2:
+        x_fit_data = grouped_high_freq['MetaVolume_mean'].values
+        y_fit_data = grouped_high_freq['MetaImpact_mean'].values
 
-plt.savefig(f'images\\impact_volume_curve\\{image_name}.png')
-plt.show()
+        x_std = grouped_high_freq['MetaVolume_std'].values
+        y_std = grouped_high_freq['MetaImpact_std'].values
+        counts = grouped_high_freq['sample_count'].values
+
+        x_sem = np.where(counts > 1, x_std / np.sqrt(counts), 1e-8)
+        y_sem = np.where(counts > 1, y_std / np.sqrt(counts), 1e-8)
+
+        log_x = np.log10(x_fit_data)
+        log_y = np.log10(y_fit_data)
+
+        sigma_log_x = x_sem / (x_fit_data * np.log(10))
+        sigma_log_y = y_sem / (y_fit_data * np.log(10))
+
+        sigma_log_x = np.maximum(sigma_log_x, 1e-6)
+        sigma_log_y = np.maximum(sigma_log_y, 1e-6)
+
+        p0_fit, _ = curve_fit(linear_model, log_x, log_y, sigma=sigma_log_y, absolute_sigma=True)
+        slope_approx = p0_fit[0]
+
+        sigma_eff_log = np.sqrt(sigma_log_y**2 + (slope_approx * sigma_log_x)**2)
+
+        popt, pcov = curve_fit(
+            linear_model,
+            log_x,
+            log_y,
+            sigma=sigma_eff_log,
+            absolute_sigma=True
+        )
+
+        slope, intercept = popt
+        perr = np.sqrt(np.diag(pcov))
+        slope_err, intercept_err = perr[0], perr[1]
+
+        print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f}")
+
+        x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
+        y_fit = (10**intercept) * (x_fit**slope)
+
+        ax1.plot(
+            x_fit,
+            y_fit,
+            linestyle='--',
+            linewidth=1.8,
+            color=cfg['color'],
+            label=f"Fit {cfg['label']}: ${slope:.3f} \\pm {slope_err:.3f}$"
+        )
+
+# ==========================================
+# THEORETICAL CURVE (Q^0.5)
+# ==========================================
+if all_x_min and all_x_max:
+    global_x_min = min(all_x_min) / 2
+    global_x_max = max(all_x_max) * 2
+    x_ref = np.logspace(np.log10(global_x_min), np.log10(global_x_max), 100)
+    y_ref = x_ref**0.5
+
+    ax1.plot(
+        x_ref,
+        y_ref,
+        linestyle='-',
+        color='black',
+        linewidth=1.2,
+        label=r'$\sqrt{Q}$'
+    )
+
+# Formatting (English labels)
+ax1.set_xscale('log')
+ax1.set_yscale('log')
+ax1.set_xlabel(r'$Q$')
+ax1.set_ylabel(r'$I$', color='black')
+ax1.grid(True, which="both", ls="-", alpha=0.2)
+
+if show_q_dist and ax2 is not None:
+    ax2.set_yscale('linear')  # Linear Y-axis for frequency counts
+    ax2.set_ylabel('Frequency', color='black')
+    ax2.tick_params(axis='y', labelcolor='black')
+
+# Unified legend for both axes
+lines_1, labels_1 = ax1.get_legend_handles_labels()
+if show_q_dist and ax2 is not None:
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left', bbox_to_anchor=(1.12, 1), frameon=True)
+else:
+    ax1.legend(lines_1, labels_1, loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+
+plt.tight_layout()
+
+if model == '':
+    filepath = os.path.join(output_dir, conf + '.png')
+else:
+    filepath = os.path.join(output_dir, model + '_' + conf + '.png')
+
+plt.savefig(filepath, bbox_inches='tight')
+print(f'Saved single fitted figure to: {filepath}')
+plt.close()
