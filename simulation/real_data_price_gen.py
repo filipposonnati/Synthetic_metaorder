@@ -100,14 +100,29 @@ def _signed_impact(signs, volumes, delta):
 
 
 def _ols_fit(X, y):
-    """OLS con stima di sigma corretta per i gradi di libertà."""
+    """OLS con stima di sigma corretta per i gradi di libertà, R^2 e R^2 rettificato."""
     coef, *_ = np.linalg.lstsq(X, y, rcond=None)
     resid = y - X @ coef
-    dof = len(y) - X.shape[1]
+    
+    n, k = X.shape
+    dof = n - k
     if dof <= 0:
         raise ValueError("troppo pochi dati per il numero di parametri stimati")
+    
     sigma = float(np.sqrt(resid @ resid / dof))
-    return coef, sigma
+    
+    # Calcolo di R^2 e R^2 rettificato
+    ss_res = np.sum(resid ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    
+    if ss_tot == 0:
+        r2 = 0.0
+        r2_adj = 0.0
+    else:
+        r2 = float(1.0 - (ss_res / ss_tot))
+        r2_adj = float(1.0 - (1.0 - r2) * ((n - 1) / dof))
+        
+    return coef, sigma, r2, r2_adj
 
 
 def _rebuild_prices(P0, sim_r, tick_size=None):
@@ -126,7 +141,7 @@ def _rebuild_prices(P0, sim_r, tick_size=None):
 
 def fit_ols(prices_real, volumes_real, signs_real, p, delta=1.0, impact_lag=1):
     """r_t = c + sum_{k=0..p} theta_k * (s |v|^delta)_{t-k} + eps_t.
-    delta=1 -> regressori = volumi firmati. Ritorna (c, theta[0..p], sigma)."""
+    delta=1 -> regressori = volumi firmati. Ritorna (c, theta[0..p], sigma, r2, r2_adj)."""
     _validate_inputs(prices_real, volumes_real, signs_real)
 
     y_all = _log_returns(prices_real)
@@ -141,8 +156,8 @@ def fit_ols(prices_real, volumes_real, signs_real, p, delta=1.0, impact_lag=1):
 
     # Colonne: [1, d_t, d_{t-1}, ..., d_{t-p}] per t = p..n-1
     X = np.column_stack([np.ones(n_obs)] + [d[p - k: n - k] for k in range(p + 1)])
-    coef, sigma = _ols_fit(X, y_all[p:])
-    return float(coef[0]), coef[1:], sigma
+    coef, sigma, r2, r2_adj = _ols_fit(X, y_all[p:])
+    return float(coef[0]), coef[1:], sigma, r2, r2_adj
 
 
 def simulate_ols(P0, volumes_real, signs_real, const, theta, sigma, rng,
@@ -158,10 +173,11 @@ def simulate_ols(P0, volumes_real, signs_real, const, theta, sigma, rng,
 
 def calibrate_and_simulate_ols(prices_real, volumes_real, signs_real, P0, p, rng,
                                delta=1.0, impact_lag=1, tick_size=None):
-    const, theta, sigma = fit_ols(prices_real, volumes_real, signs_real, p,
+    const, theta, sigma, r2, r2_adj = fit_ols(prices_real, volumes_real, signs_real, p,
                                   delta=delta, impact_lag=impact_lag)
-    return simulate_ols(P0, volumes_real, signs_real, const, theta, sigma, rng,
+    prices_sim = simulate_ols(P0, volumes_real, signs_real, const, theta, sigma, rng,
                         delta=delta, impact_lag=impact_lag, tick_size=tick_size)
+    return prices_sim, r2, r2_adj
 
 
 # ---------------------------------------------------------------------------
@@ -183,12 +199,12 @@ def _build_impact_signal(signs, volumes, beta, delta, kernel_L, impact_lag):
 
 
 def fit_tim(prices_real, volumes_real, signs_real, beta, delta, kernel_L, impact_lag=1):
-    """r_t = c + sigma_f * X_t + eta_t. Ritorna (c, sigma_f, sigma_eta)."""
+    """r_t = c + sigma_f * X_t + eta_t. Ritorna (c, sigma_f, sigma_eta, r2, r2_adj)."""
     _validate_inputs(prices_real, volumes_real, signs_real)
     y = _log_returns(prices_real)
     X = _build_impact_signal(signs_real, volumes_real, beta, delta, kernel_L, impact_lag)
-    coef, sigma_eta = _ols_fit(np.column_stack([np.ones(len(y)), X]), y)
-    return float(coef[0]), float(coef[1]), sigma_eta
+    coef, sigma_eta, r2, r2_adj = _ols_fit(np.column_stack([np.ones(len(y)), X]), y)
+    return float(coef[0]), float(coef[1]), sigma_eta, r2, r2_adj
 
 
 def simulate_tim(P0, volumes_real, signs_real, const, sigma_f, sigma_eta, beta, delta,
@@ -200,10 +216,16 @@ def simulate_tim(P0, volumes_real, signs_real, const, sigma_f, sigma_eta, beta, 
 
 def calibrate_and_simulate_tim(prices_real, volumes_real, signs_real, P0, beta, delta,
                                kernel_L, rng, impact_lag=1, tick_size=None):
-    const, sigma_f, sigma_eta = fit_tim(prices_real, volumes_real, signs_real,
-                                        beta, delta, kernel_L, impact_lag)
-    return simulate_tim(P0, volumes_real, signs_real, const, sigma_f, sigma_eta,
-                        beta, delta, kernel_L, rng, impact_lag, tick_size)
+    const, sigma_f, sigma_eta, r2, r2_adj = fit_tim(
+        prices_real, volumes_real, signs_real,
+        beta=beta, delta=delta, kernel_L=kernel_L, impact_lag=impact_lag
+    )
+    prices_sim = simulate_tim(
+        P0, volumes_real, signs_real, const, sigma_f, sigma_eta,
+        beta=beta, delta=delta, kernel_L=kernel_L, rng=rng,
+        impact_lag=impact_lag, tick_size=tick_size
+    )
+    return prices_sim, r2, r2_adj
 
 
 # ---------------------------------------------------------------------------
@@ -243,11 +265,11 @@ def run(data_dir=DEFAULT_DATA_DIR,
 
         try:
             if price_model == "regression":
-                prices_sim = calibrate_and_simulate_ols(
+                prices_sim, r2, r2_adj = calibrate_and_simulate_ols(
                     prices_real, volumes_real, signs_real, P0=P0, p=vol_lags_for_ret,
                     rng=rng, delta=delta, impact_lag=impact_lag, tick_size=tick_size)
             else:
-                prices_sim = calibrate_and_simulate_tim(
+                prices_sim, r2, r2_adj = calibrate_and_simulate_tim(
                     prices_real, volumes_real, signs_real, P0=P0, beta=beta, delta=delta,
                     kernel_L=kernel_L, rng=rng, impact_lag=impact_lag, tick_size=tick_size)
         except ValueError as e:
@@ -255,7 +277,9 @@ def run(data_dir=DEFAULT_DATA_DIR,
             print(f"  !! Giorno {f.name} saltato: {e}")
             continue
 
-        save_simulated_data(out_dir / f.name, timestamps, prices_sim, volumes_real, signs_real)
+        print('Prices R2: ', r2, r2_adj)
+
+        #save_simulated_data(out_dir / f.name, timestamps, prices_sim, volumes_real, signs_real)
         n_done += 1
         print(f"  -> Giorno {f.name} completato.")
 
@@ -269,7 +293,7 @@ if __name__ == "__main__":
         price_model="regression",          # 'regression' | 'tim'
         vol_lags_for_ret=1000,
         beta=0.25,
-        delta=0.5,
+        delta=0.0,
         kernel_L=500,
         impact_lag=1,
         tick_size=None,

@@ -17,9 +17,11 @@ from regression_delta import impact_simulate, impact_fit
 paths = np.array(listdir('..\\database\\data'))
 
 p = 1000
-delta = 0.0
+delta = 1.0
+bootstrap_residuals = True
 
 name = f'reg_delta_{delta}_{p}'
+#name = f'var_reduced_{p}'
 
 dir = 'database\\data_' + name
 
@@ -41,37 +43,27 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p]  # Prezzo reale al punto p
 
-    """
     results = impact_fit(r, v, delta = delta, p = p)
 
     prices_sim, volumes_sim, r_sim = impact_simulate(
         results,
         n_steps=len(r),
         initial_v=initial_v,
-        initial_price=initial_price
+        initial_price=initial_price,
+        bootstrap=True
     )
-    """
 
     """
-    results = var_fit(r, v, p = p)
-    
-    prices_sim, volumes_sim, r_sim = simulate_var(
-        results,
-        n_steps=len(r),
-        initial_v=initial_v,
-        initial_r=initial_r,
-        initial_price=initial_price
-    )
-    """
+    results = var_reduced_fit(r, v, p = p, plot=False)
 
-    results = var_reduced_fit(r, v, p = p)
-    
     prices_sim, volumes_sim, r_sim = simulate_var_reduced(
         results,
         n_steps=len(r),
         initial_v=initial_v,
         initial_r=initial_r,
-        initial_price=initial_price
+        initial_price=initial_price,
+        bootstrap=True
     )
+    """
 
     save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)
