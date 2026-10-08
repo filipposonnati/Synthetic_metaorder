@@ -43,7 +43,8 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p]  # Prezzo reale al punto p
 
-    results = impact_fit(r, v, delta = delta, p = p)
+    
+    results = impact_fit(r, v, delta = delta, p = p, plot = True)
 
     prices_sim, volumes_sim, r_sim = impact_simulate(
         results,
@@ -66,4 +67,6 @@ for path in paths:
     )
     """
 
-    save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)
+    exit()
+
+    #save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)

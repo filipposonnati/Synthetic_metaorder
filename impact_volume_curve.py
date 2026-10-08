@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from scipy.optimize import curve_fit
+from scipy.stats import chi2
+from scipy.odr import ODR, Model, RealData
 
 # ==========================================
 # FLAG & STYLING CONFIGURATION
@@ -25,11 +27,12 @@ def linear_model(log_x, slope, intercept):
 # ==========================================
 # OUTPUT & DATA LOADING
 # ==========================================
-output_dir = os.path.join('images', 'impact_volume_complete')
+output_dir = os.path.join('images', 'impact_volume_curve')
 os.makedirs(output_dir, exist_ok=True)
 
-#model = 'lmf_1.5_0.3_real_tim_lin'
-model = 'var_1000'
+#model = 'lmf_1.5_0.3_real_tim_sqrt'
+#model = 'var_reduced_1000'
+model = 'reg_delta_0.0_1000'
 dir = 'meta'
 if model != "":
     dir = dir + "_" + model
@@ -143,7 +146,7 @@ for cfg in ranges_config:
         y_data_all,
         linestyle='',
         marker=cfg['marker'],
-        markersize=6,
+        markersize=5,
         color=cfg['color'],
         label=f"Data {cfg['label']}"
     )
@@ -172,27 +175,34 @@ for cfg in ranges_config:
         sigma_log_x = np.maximum(sigma_log_x, 1e-6)
         sigma_log_y = np.maximum(sigma_log_y, 1e-6)
 
-        p0_fit, _ = curve_fit(linear_model, log_x, log_y, sigma=sigma_log_y, absolute_sigma=True)
-        slope_approx = p0_fit[0]
+        # Modello lineare per ODR
+        def linear_func(p, x):
+            return p[0] * x + p[1]
 
-        sigma_eff_log = np.sqrt(sigma_log_y**2 + (slope_approx * sigma_log_x)**2)
+        model_odr = Model(linear_func)
+        # ODR accetta direttamente gli errori su X e su Y
+        data = RealData(log_x, log_y, sx=sigma_log_x, sy=sigma_log_y)
+        odr = ODR(data, model_odr, beta0=[1.0, 0.0])
+        out = odr.run()
 
-        popt, pcov = curve_fit(
-            linear_model,
-            log_x,
-            log_y,
-            sigma=sigma_eff_log,
-            absolute_sigma=True
-        )
+        slope, intercept = out.beta
+        slope_err, intercept_err = out.sd_beta
 
-        slope, intercept = popt
-        perr = np.sqrt(np.diag(pcov))
-        slope_err, intercept_err = perr[0], perr[1]
+        # out è l'oggetto restituito da odr.run()
+        chi2_val = out.sum_square
+        dof = len(log_y) - len(out.beta)  # N - k (con k=2)
 
-        print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f}")
+        if dof > 0:
+            chi2_red = chi2_val / dof
+            p_value = chi2.sf(chi2_val, dof)
+
+        print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f} | Chi2_red: {chi2_red:.2f} | p-value: {p_value:.4e}")
 
         x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
         y_fit = (10**intercept) * (x_fit**slope)
+
+        # Formattazione p-value per la legenda (notazione scientifica se molto piccolo)
+        p_val_str = f"{p_value:.3f}" if p_value >= 0.001 else f"{p_value:.1e}"
 
         ax1.plot(
             x_fit,
@@ -200,7 +210,7 @@ for cfg in ranges_config:
             linestyle='--',
             linewidth=1.8,
             color=cfg['color'],
-            label=f"Fit {cfg['label']}: ${slope:.3f} \\pm {slope_err:.3f}$"
+            label=rf"Fit {cfg['label']}: ${slope:.3f} \pm {slope_err:.3f}$" + '\n' + rf"($\chi_\nu^2 = {chi2_red:.2f}$, $p = {p_val_str}$)"
         )
 
 # ==========================================

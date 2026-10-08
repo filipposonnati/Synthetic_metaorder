@@ -10,7 +10,8 @@ import gc
 
 #model = "real_reg_sqrt"
 #model = 'lmf_1.5_0.3_real_tim_lin'
-model = 'var_1000'
+model = 'var_reduced_1000'
+#model = 'reg_delta_0.0_1000'
 iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
 

@@ -1,5 +1,43 @@
 import numpy as np
 import statsmodels.api as sm
+import matplotlib.pyplot as plt
+
+
+def plot_residuals(residuals, names=("Volumes", "Returns")):
+    """Istogramma dei residui con densità normale sovrapposta.
+
+    residuals: matrice (n, k) con una colonna per ciascun modello,
+    oppure lista di array 1D (uno per modello).
+    """
+    fig, axes = plt.subplots(1, len(names), figsize=(11, 4))
+
+    for k, name in enumerate(names):
+        e = np.asarray(residuals[k] if isinstance(residuals, (list, tuple))
+                       else residuals[:, k], dtype=float)
+        e = e[~np.isnan(e)]
+
+        mean = np.mean(e)
+        sd = np.std(e, ddof=1)
+        ax = axes[k]
+
+        ax.hist(e, bins='auto', density=True, alpha=0.65, edgecolor='white', color='#1f77b4')
+
+        x_min = min(e.min(), mean - 4 * sd)
+        x_max = max(e.max(), mean + 4 * sd)
+        x = np.linspace(x_min, x_max, 500)
+        pdf = np.exp(-0.5 * ((x - mean) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
+        ax.plot(x, pdf, color='red', lw=1.8, label='Normal')
+
+        ax.set_xlim(mean - 3.5 * sd, mean + 3.5 * sd)
+        ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 3))
+        ax.tick_params(axis='x', rotation=15, labelsize=9)
+
+        ax.set_title(f"{name} Distribution", fontsize=11, pad=10)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
 
 
 def power_transform(v, delta):
@@ -18,7 +56,7 @@ def _lags(x, p):
     return np.column_stack([x[p - i:n - i] for i in range(1, p + 1)])
 
 
-def impact_fit(returns, volumes, delta=1.0, p=10):
+def impact_fit(returns, volumes, delta=1.0, p=10, plot=False):
     returns = np.asarray(returns, dtype=float)
     volumes = np.asarray(volumes, dtype=float)
     if len(returns) != len(volumes):
@@ -33,6 +71,9 @@ def impact_fit(returns, volumes, delta=1.0, p=10):
     v_lags = power_transform(_lags(volumes, p), delta)
     X_ret = sm.add_constant(np.column_stack([v_t, v_lags]))
     res_ret = sm.OLS(returns[p:], X_ret).fit()
+
+    if plot:
+        plot_residuals([np.asarray(res_vol.resid), np.asarray(res_ret.resid)])
 
     print('Volumes R2: ', res_vol.rsquared, res_vol.rsquared_adj)
     print('Returns R2: ', res_ret.rsquared, res_ret.rsquared_adj)
@@ -55,6 +96,7 @@ def impact_fit(returns, volumes, delta=1.0, p=10):
             "rsquared_adj": res_ret.rsquared_adj,
         },
     }
+
 
 def impact_simulate(results, n_steps, initial_v, initial_price=100.0,
                     seed=None, bootstrap=False):
