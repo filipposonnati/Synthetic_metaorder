@@ -1,6 +1,12 @@
 import numpy as np
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
+import json
+from pathlib import Path
+from os import listdir
+import os
+
+from utils import clear_data, open_data, save_simulated_data
 
 
 def plot_residuals(residuals, names=("Volumes", "Returns")):
@@ -148,3 +154,174 @@ def impact_simulate(results, n_steps, initial_v, initial_price=100.0,
         prices[t + 1] = prices[t] * (1 + sim_r[t])
 
     return prices[p:p + n_steps], sim_v[p:], sim_r[p:]
+
+
+def save_impact_model(results, path):
+    """Salva i risultati di impact_fit in un file .npz (nessun pickle)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    vm, rm = results["volume_model"], results["return_model"]
+    meta = {
+        "p": int(results["p"]),
+        "delta": float(results["delta"]),
+        "volume_sigma2": float(vm["sigma2"]),
+        "volume_rsquared": float(vm["rsquared"]),
+        "volume_rsquared_adj": float(vm["rsquared_adj"]),
+        "return_sigma2": float(rm["sigma2"]),
+        "return_rsquared": float(rm["rsquared"]),
+        "return_rsquared_adj": float(rm["rsquared_adj"]),
+    }
+    np.savez_compressed(
+        path,
+        meta=json.dumps(meta),
+        volume_params=np.asarray(vm["params"]),
+        volume_resid=np.asarray(vm["resid"]),
+        return_params=np.asarray(rm["params"]),
+        return_resid=np.asarray(rm["resid"]),
+    )
+
+def load_impact_model(path):
+    """Ricarica un modello salvato con save_impact_model, nello stesso formato di impact_fit."""
+    with np.load(path, allow_pickle=False) as f:
+        meta = json.loads(str(f["meta"]))
+        return {
+            "p": meta["p"],
+            "delta": meta["delta"],
+            "volume_model": {
+                "params": f["volume_params"],
+                "sigma2": meta["volume_sigma2"],
+                "resid": f["volume_resid"],
+                "rsquared": meta["volume_rsquared"],
+                "rsquared_adj": meta["volume_rsquared_adj"],
+            },
+            "return_model": {
+                "params": f["return_params"],
+                "sigma2": meta["return_sigma2"],
+                "resid": f["return_resid"],
+                "rsquared": meta["return_rsquared"],
+                "rsquared_adj": meta["return_rsquared_adj"],
+            },
+        }
+
+def plot_impact_fit(results, residuals=True, show=True):
+    """Visualizza i risultati di impact_fit (o di un modello caricato da file).
+
+    Pannelli:
+      1. coefficienti AR del modello dei volumi in funzione del lag
+      2. kernel di impatto sui rendimenti (lag 0 = V_t contemporaneo)
+      3. impatto cumulato, cioè la somma dei coefficienti fino al lag k
+      4. funzione di impatto sign(v)|v|^delta
+    Se residuals=True mostra anche gli istogrammi dei residui (plot_residuals).
+    """
+    p = results["p"]
+    delta = results["delta"]
+    vm, rm = results["volume_model"], results["return_model"]
+
+    a = np.asarray(vm["params"])[1:]   # lag 1..p (esclude la costante)
+    b = np.asarray(rm["params"])[1:]   # lag 0..p (esclude la costante)
+    lags_v = np.arange(1, p + 1)
+    lags_r = np.arange(0, p + 1)
+
+    def draw(ax, x, y, title, xlabel="lag", ylabel=None):
+        if len(x) <= 30:
+            ax.stem(x, y, basefmt=" ")
+        else:
+            ax.plot(x, y, lw=1.2)
+        ax.axhline(0, color='k', lw=0.8)
+        ax.set_title(title, fontsize=11)
+        ax.set_xlabel(xlabel)
+        if ylabel:
+            ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+
+    draw(axes[0, 0], lags_v, a,
+         f"Volume AR({p}) - R² = {vm['rsquared']:.3f} (adj {vm['rsquared_adj']:.3f})",
+         ylabel="coefficiente")
+    draw(axes[0, 1], lags_r, b,
+         f"Kernel di impatto sui rendimenti - R² = {rm['rsquared']:.3f} (adj {rm['rsquared_adj']:.3f})",
+         ylabel="coefficiente")
+    draw(axes[1, 0], lags_r, np.cumsum(b),
+         "Impatto cumulato sui rendimenti", ylabel="somma coefficienti")
+
+    ax = axes[1, 1]
+    x = np.linspace(-3, 3, 400)
+    ax.plot(x, power_transform(x, delta), color='#d62728', lw=1.8, label=f"delta = {delta}")
+    ax.plot(x, x, color='gray', lw=1, ls='--', label="lineare")
+    ax.axhline(0, color='k', lw=0.8)
+    ax.axvline(0, color='k', lw=0.8)
+    ax.set_title("Funzione di impatto sign(v)|v|^delta", fontsize=11)
+    ax.set_xlabel("v")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    fig.suptitle(f"Fit: p = {p}, delta = {delta}", fontsize=12)
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    if residuals:
+        plot_residuals([np.asarray(vm["resid"]), np.asarray(rm["resid"])])
+
+    return fig
+
+if __name__ == '__main__':
+    paths = np.array(listdir('..\\database\\data'))
+
+    p = 100
+    delta = 0.0
+    bootstrap_residuals = True
+
+    name = f'reg_delta_{delta}_{p}'
+
+    dir = 'database\\data_' + name
+
+    if not os.path.exists('..\\' + dir):
+        os.makedirs('..\\' + dir)
+
+    clear_data(name)
+
+    model_dir = Path('..') / 'models' / name
+
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
+    for path in paths:
+        print(path)
+        model_path = model_dir / (Path(path).stem + '.npz')
+
+        prices, volumes, signs = open_data(path)
+
+        r = (prices[1:] - prices[:-1]) / prices[:-1]
+        v = volumes[:-1] * signs[:-1]
+
+        # Prendi i primi 'p' valori come seme per la simulazione
+        initial_v = v[:p]
+        initial_r = r[:p]
+        initial_price = prices[p]  # Prezzo reale al punto p
+
+        if model_path.exists():
+            print('Load Model')
+            results = load_impact_model(model_path)       # salta il fit
+        else:
+            print('Compute Model')
+            results = impact_fit(r, v, delta=delta, p=p)
+            save_impact_model(results, model_path)
+
+        save_impact_model(results, model_path)
+
+        plot_impact_fit(results)
+
+        exit()
+
+        prices_sim, volumes_sim, r_sim = impact_simulate(
+            results,
+            n_steps=len(r),
+            initial_v=initial_v,
+            initial_price=initial_price,
+            bootstrap=True
+        )
+
+        #save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)

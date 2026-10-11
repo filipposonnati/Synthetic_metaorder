@@ -12,12 +12,12 @@ import os
 from utils import clear_data, open_data, save_simulated_data
 from var import var_fit, simulate_var
 from var_reduced import var_reduced_fit, simulate_var_reduced
-from regression_delta import impact_simulate, impact_fit
+from regression_delta import impact_simulate, impact_fit, save_impact_model, load_impact_model, plot_impact_fit
 
 paths = np.array(listdir('..\\database\\data'))
 
-p = 1000
-delta = 1.0
+p = 100
+delta = 0.0
 bootstrap_residuals = True
 
 name = f'reg_delta_{delta}_{p}'
@@ -30,8 +30,14 @@ if not os.path.exists('..\\' + dir):
 
 clear_data(name)
 
+model_dir = Path('..') / 'models' / name
+
+if not os.path.exists(model_dir):
+    os.makedirs(model_dir)
+
 for path in paths:
     print(path)
+    model_path = model_dir / (Path(path).stem + '.npz')
 
     prices, volumes, signs = open_data(path)
 
@@ -43,8 +49,19 @@ for path in paths:
     initial_r = r[:p]
     initial_price = prices[p]  # Prezzo reale al punto p
 
-    
-    results = impact_fit(r, v, delta = delta, p = p, plot = True)
+    if model_path.exists():
+        print('Load Model')
+        results = load_impact_model(model_path)       # salta il fit
+    else:
+        print('Compute Model')
+        results = impact_fit(r, v, delta=delta, p=p)
+        save_impact_model(results, model_path)
+
+    save_impact_model(results, model_path)
+
+    plot_impact_fit(results)
+
+    exit()
 
     prices_sim, volumes_sim, r_sim = impact_simulate(
         results,
@@ -66,7 +83,5 @@ for path in paths:
         bootstrap=True
     )
     """
-
-    exit()
 
     #save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)

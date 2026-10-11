@@ -1,9 +1,14 @@
-import inspect
-
+import json
 import numpy as np
 from statsmodels.tsa.api import VAR
-
 import matplotlib.pyplot as plt
+
+from os import listdir
+from pathlib import Path
+from types import SimpleNamespace
+import os
+
+from utils import clear_data, open_data, save_simulated_data
 
 # Palette di riferimento (superficie chiara): slot categorici 1 e 2
 _SURFACE = "#fcfcfb"
@@ -14,7 +19,7 @@ _BLUE = "#2a78d6"    # volumi
 _ORANGE = "#eb6834"  # rendimenti
 
 
-def plot_residuals(residuals, names=("Volumi", "Rendimenti")):
+def plot_residuals(residuals, names=("Volumes", "Returns")):
     fig, axes = plt.subplots(1, len(names), figsize=(11, 4))
 
     for k, name in enumerate(names):
@@ -36,7 +41,7 @@ def plot_residuals(residuals, names=("Volumi", "Rendimenti")):
         x = np.linspace(x_min, x_max, 500)
         
         pdf = np.exp(-0.5 * ((x - mean) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
-        ax.plot(x, pdf, color='red', lw=1.8, label='Normale')
+        ax.plot(x, pdf, color='red', lw=1.8, label='Normal')
 
         # 3. XLIM RAGIONEVOLE (±3.5 deviazioni standard dalla media)
         ax.set_xlim(mean - 3.5 * sd, mean + 3.5 * sd)
@@ -45,7 +50,7 @@ def plot_residuals(residuals, names=("Volumi", "Rendimenti")):
         ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 3))
         ax.tick_params(axis='x', rotation=15, labelsize=9)
 
-        ax.set_title(f"Distribuzione {name}", fontsize=11, pad=10)
+        ax.set_title(f"{name} Distribution", fontsize=11, pad=10)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -112,3 +117,161 @@ def simulate_var_reduced(results, n_steps, initial_v, initial_r,
     sim_v, sim_r = y[p:, 0], y[p:, 1]
     prices = initial_price * np.concatenate([[1.0], np.cumprod(1 + sim_r[:-1])])
     return prices, sim_v, sim_r
+
+
+def save_var_reduced_model(results, path):
+    """Salva i risultati di var_reduced_fit in un file .npz (nessun pickle).
+
+    Vengono salvati solo i pezzi usati da simulate_var_reduced
+    (coefs, resid, sigma_u) più p e gli R².
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fitted = results["model"]
+    meta = {
+        "p": int(results["p"]),
+        "r2_volumi": float(results["r2"]["volumi"]),
+        "r2_rendimenti": float(results["r2"]["rendimenti"]),
+        "r2_adj_volumi": float(results["r2_adj"]["volumi"]),
+        "r2_adj_rendimenti": float(results["r2_adj"]["rendimenti"]),
+    }
+    np.savez_compressed(
+        path,
+        meta=json.dumps(meta),
+        coefs=np.asarray(fitted.coefs),
+        resid=np.asarray(fitted.resid),
+        sigma_u=np.asarray(fitted.sigma_u),
+    )
+
+
+def load_var_reduced_model(path):
+    """Ricarica un modello salvato con save_var_reduced_model, nello stesso formato di var_reduced_fit.
+
+    results["model"] è un oggetto leggero con gli attributi coefs, resid, sigma_u
+    (sufficienti per simulate_var_reduced), non un VARResults di statsmodels.
+    """
+    with np.load(path, allow_pickle=False) as f:
+        meta = json.loads(str(f["meta"]))
+        coefs, resid, sigma_u = f["coefs"], f["resid"], f["sigma_u"]
+
+    p = meta["p"]
+    return {
+        "p": p,
+        "model": SimpleNamespace(coefs=coefs, resid=resid, sigma_u=sigma_u,
+                                 k_ar=p, neqs=coefs.shape[1]),
+        "sigma_cov": sigma_u,
+        "r2": {"volumi": meta["r2_volumi"], "rendimenti": meta["r2_rendimenti"]},
+        "r2_adj": {"volumi": meta["r2_adj_volumi"], "rendimenti": meta["r2_adj_rendimenti"]},
+    }
+
+
+def plot_var_reduced_fit(results, residuals=True, show=True):
+    """Visualizza i risultati di var_reduced_fit (o di un modello caricato da file).
+
+    Griglia 2x2 dei coefficienti in funzione del lag: le righe sono le equazioni
+    (volumi, rendimenti), le colonne i regressori ritardati (volumi, rendimenti).
+    Se residuals=True mostra anche gli istogrammi dei residui (plot_residuals).
+    """
+    p = results["p"]
+    fitted = results["model"]
+    coefs = np.asarray(fitted.coefs)          # (p, eq, regressore), 0 = volumi, 1 = rendimenti
+    sigma = np.asarray(fitted.sigma_u)
+    lags = np.arange(1, p + 1)
+
+    names = ("Volumi", "Rendimenti")
+    colors = (_BLUE, _ORANGE)
+    r2, r2_adj = results["r2"], results["r2_adj"]
+    r2_keys = ("volumi", "rendimenti")
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    fig.patch.set_facecolor(_SURFACE)
+
+    for eq in range(2):
+        for reg in range(2):
+            ax = axes[eq, reg]
+            ax.set_facecolor(_SURFACE)
+            y = coefs[:, eq, reg]
+            if p <= 30:
+                ax.stem(lags, y, basefmt=" ")
+            else:
+                ax.plot(lags, y, lw=1.2, color=colors[reg])
+            ax.axhline(0, color=_INK_2, lw=0.8)
+            ax.set_title(f"{names[reg]}(t-k) → {names[eq]}(t)", fontsize=11, color=_INK)
+            ax.set_xlabel("lag k")
+            ax.set_ylabel("coefficiente")
+            ax.grid(True, color=_GRID, alpha=0.8)
+            if reg == 0:
+                k = r2_keys[eq]
+                ax.annotate(f"R² = {r2[k]:.3f} (adj {r2_adj[k]:.3f})",
+                            xy=(0.02, 0.95), xycoords="axes fraction", va="top",
+                            fontsize=9, color=_INK_2)
+
+    corr = sigma[0, 1] / np.sqrt(sigma[0, 0] * sigma[1, 1])
+    fig.suptitle(f"VAR({p}) forma ridotta - correlazione residui volumi/rendimenti = {corr:.3f}",
+                 fontsize=12, color=_INK)
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    if residuals:
+        plot_residuals(np.asarray(fitted.resid))
+
+    return fig
+
+if __name__ == '__main__':
+    paths = np.array(listdir('..\\database\\data'))
+
+    p = 10
+    bootstrap_residuals = True
+
+    name = f'var_reduced_{p}'
+
+    dir = 'database\\data_' + name
+
+    if not os.path.exists('..\\' + dir):
+        os.makedirs('..\\' + dir)
+
+    #clear_data(name)
+
+    model_dir = Path('..') / 'models' / name
+
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
+    for path in paths:
+        print(path)
+        model_path = model_dir / (Path(path).stem + '.npz')
+
+        prices, volumes, signs = open_data(path)
+
+        r = (prices[1:] - prices[:-1]) / prices[:-1]
+        v = volumes[:-1] * signs[:-1]
+
+        # Prendi i primi 'p' valori come seme per la simulazione
+        initial_v = v[:p]
+        initial_r = r[:p]
+        initial_price = prices[p]  # Prezzo reale al punto p
+
+        if model_path.exists():
+            print('Load Model')
+            results = load_var_reduced_model(model_path)       # salta il fit
+        else:
+            print('Compute Model')
+            results = var_reduced_fit(r, v, p=p)
+            save_var_reduced_model(results, model_path)
+
+        plot_var_reduced_fit(results)
+
+        exit()
+
+        prices_sim, volumes_sim, r_sim = simulate_var_reduced(
+            results,
+            n_steps=len(r),
+            initial_v=initial_v,
+            initial_r=initial_r,
+            initial_price=initial_price,
+            bootstrap=True
+        )
+
+        #save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)
