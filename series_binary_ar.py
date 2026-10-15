@@ -113,7 +113,7 @@ def process_one_file(trades: pd.DataFrame, signs: np.ndarray, nb_traders: int, k
 if __name__ == '__main__':
     
     # Creazione cartella di output
-    output_dir = 'images/meta_child_dist'
+    output_dir = 'images/acf'
     os.makedirs(output_dir, exist_ok=True)
 
     # Caricamento della funzione di autocorrelazione target (ACF)
@@ -226,7 +226,7 @@ if __name__ == '__main__':
         y_fit_exp = exp_func(x_fit, A_exp, lambda_exp)
         ax_main.plot(
             x_fit, y_fit_exp, linestyle='--', color=color, linewidth=1.5,
-            label=f"Exp Config {idx+1} (λ={lambda_exp:.3f}, $\\chi^2_{{red}}$={chi2_red_exp:.2f})"
+            label=f"Exp Config {idx+1} ($\\lambda$={lambda_exp:.3f}, $\\chi^2_{{red}}$={chi2_red_exp:.2f})"
         )
 
         # --- 2. Fit Exponential Power Law ---
@@ -247,7 +247,7 @@ if __name__ == '__main__':
             y_fit_pow = exp_power_law_func(x_fit, A_pow, gamma_pow, lambda_pow)
             ax_main.plot(
                 x_fit, y_fit_pow, linestyle=':', color=color, linewidth=2.2,
-                label=f"Exp Power Config {idx+1} (γ={gamma_pow:.2f}, λ={lambda_pow:.3f}, $\\chi^2_{{red}}$={chi2_red_pow:.2f})"
+                label=f"Exp Power Config {idx+1} ($\\gamma$={gamma_pow:.2f}, $\\lambda$={lambda_pow:.3f}, $\\chi^2_{{red}}$={chi2_red_pow:.2f})"
             )
 
             # Plot Residui nel sottografetto
@@ -255,27 +255,26 @@ if __name__ == '__main__':
             ax_res.plot(x_data, res_pow_log, linestyle=':', marker='o', markersize=3, color=color, alpha=0.8)
 
             print(f"\n--- Fit Results for '{label}' ---")
-            print(f"Esponenziale:      Chi2_red = {chi2_red_exp:.4f}")
+            print(f"Exponential:      Chi2_red = {chi2_red_exp:.4f}")
             print(f"Exp Power Law:    Chi2_red = {chi2_red_pow:.4f}")
             if chi2_red_pow < chi2_red_exp:
-                print("--> Il modello 'Exp Power Law' fornisce un fit migliore.")
+                print("--> The 'Exp Power Law' model provides a better fit.")
             else:
-                print("--> Il modello 'Esponenziale' fornisce un fit migliore.")
+                print("--> The 'Exponential' model provides a better fit.")
 
         except Exception as e:
-            print(f"Fit Exp Power Law fallito per {label}: {e}")
+            print(f"Exp Power Law fit failed for {label}: {e}")
 
     # Formattazione Pannello Principale
     ax_main.set_yscale('log')
     ax_main.set_ylabel("Probability $P(L)$")
-    #ax_main.set_title("Meta-order Length Distribution & Fits Comparison")
     ax_main.grid(True, which="both", ls="--", alpha=0.5)
     ax_main.legend(fontsize='small', loc='best')
 
     # Formattazione Pannello Residui
     ax_res.axhline(0, color='black', linestyle='-', linewidth=1, alpha=0.7)
-    ax_res.set_xlabel("Meta-order Length")
-    ax_res.set_ylabel("Residuals\n$[\\ln P_{data} - \\ln P_{fit}]$")
+    ax_res.set_xlabel("Meta-order Length $L$")
+    ax_res.set_ylabel("Residuals\n$[\\ln P_{\\text{data}} - \\ln P_{\\text{fit}}]$")
     ax_res.grid(True, which="both", ls="--", alpha=0.5)
 
     plt.tight_layout()
@@ -289,12 +288,12 @@ if __name__ == '__main__':
     
     fig2, ax2 = plt.subplots(figsize=(8, 6))
 
-    ax2.plot(lags, target_rhos, label="ACF Reale (Target)", color='black', linewidth=2.0)
-    ax2.plot(lags, mean_reconstructed_acf, label="ACF Ricostruita (Simulata)", color='crimson', linestyle='--', linewidth=1.8)
+    ax2.plot(lags, target_rhos, label="Target ACF (Real)", color='black', linewidth=2.0)
+    ax2.plot(lags, mean_reconstructed_acf, label="Reconstructed ACF (Simulated)", color='crimson', linestyle='--', linewidth=1.8)
     
     ax2.set_xlabel("Lag $k$")
     ax2.set_ylabel("Autocorrelation $\\rho(k)$")
-    ax2.set_title("ACF Reale vs ACF Ricostruita")
+    ax2.set_title("Target ACF vs Reconstructed ACF")
     ax2.grid(True, which="both", ls="--", alpha=0.5)
     ax2.legend()
 

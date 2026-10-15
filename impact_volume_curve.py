@@ -31,7 +31,7 @@ os.makedirs(output_dir, exist_ok=True)
 
 #model = 'lmf_1.5_0.3_real_tim_sqrt'
 #model = 'var_reduced_1000'
-model = 'reg_delta_0.5_1000'
+model = 'tim_param_1.0_1000'
 
 dir = 'meta'
 if model != "":
