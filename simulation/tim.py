@@ -49,8 +49,8 @@ def plot_impact_fit(results, out_dir=None, residuals=True, resid_step = 10):
     Panels:
       1. AR coefficients of the volume model vs lag
       2. Return impact kernel (lag 0 = contemporaneous V_t)
-      3. Cumulative impact, i.e. sum of the kernel coefficients up to lag k
-      4. Impact function sign(v)|v|^delta
+      3. Cumulative AR coefficients of the volume model
+      4. Cumulative impact on returns, i.e. sum of the kernel coefficients up to lag k
     """
     p = results["p"]
     delta = results["delta"]
@@ -81,19 +81,10 @@ def plot_impact_fit(results, out_dir=None, residuals=True, resid_step = 10):
     draw(axes[0, 1], lags_r, b,
          f"Return impact kernel - in-sample R² = {rm['rsquared']:.3f} (adj {rm['rsquared_adj']:.3f})",
          ylabel="coefficient")
-    draw(axes[1, 0], lags_r, np.cumsum(b),
+    draw(axes[1, 0], lags_v, np.cumsum(a),
+         "Cumulative AR coefficients on volumes", ylabel="cumulative sum of coefficients")
+    draw(axes[1, 1], lags_r, np.cumsum(b),
          "Cumulative impact on returns", ylabel="cumulative sum of coefficients")
-
-    ax = axes[1, 1]
-    x = np.linspace(-3, 3, 400)
-    ax.plot(x, power_transform(x, delta), color='#d62728', lw=1.8, label=f"delta = {delta}")
-    ax.plot(x, x, color='gray', lw=1, ls='--', label="linear")
-    ax.axhline(0, color='k', lw=0.8)
-    ax.axvline(0, color='k', lw=0.8)
-    ax.set_title("Impact function sign(v)|v|^delta", fontsize=11)
-    ax.set_xlabel("v")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
 
     fig.suptitle(f"Fit: p = {p}, delta = {delta}", fontsize=12)
     plt.tight_layout()
@@ -461,14 +452,14 @@ if __name__ == '__main__':
     paths = np.array(sorted(listdir('..\\database\\data')))   # sorted -> chronological order
 
     p = 1000
-    delta = 0.5
+    delta = 1.0
     fitting_window = 100          # number of trading days used for the fit
     bootstrap_residuals = True
 
     trim_top = True        # <-- flag: False restores the original behaviour
     top_frac = 0.05        # fraction of largest |volume| trades dropped each day
 
-    name = f'reg_delta_{delta}_{p}'
+    name = f'tim_{delta}_{p}'
 
     dir = 'database\\data_' + name
     if not os.path.exists('..\\' + dir):
@@ -503,7 +494,7 @@ if __name__ == '__main__':
         save_impact_model(results, model_path)
 
     # ---- Plots saved next to the model ----
-    plot_impact_fit(results, out_dir=model_dir)
+    plot_impact_fit(results, out_dir=None)#model_dir)
 
     # ---- Out-of-sample evaluation on the remaining days ----
     if len(test_paths) > 0:
@@ -518,6 +509,8 @@ if __name__ == '__main__':
                                     "n_test_days": len(test_paths)})
     else:
         print('No days left for out-of-sample evaluation')
+
+    exit()
 
     clear_data(name)
 

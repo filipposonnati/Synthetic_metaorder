@@ -61,7 +61,7 @@ def plot_residuals(residuals, names=("Volumes", "Returns"), save_path=None, step
 
 def plot_var_reduced_fit(results, out_dir=None, residuals=True, resid_step=10):
     """Plot the fit results (or of a model loaded from file).
-    If out_dir is given, figures are saved there (var_fit.png, residuals.png)
+    If out_dir is given, figures are saved there (var_fit.png, var_fit_cumulative.png, residuals.png)
     instead of being shown.
 
     2x2 grid of the coefficients vs lag: rows are the equations (volumes, returns),
@@ -77,40 +77,50 @@ def plot_var_reduced_fit(results, out_dir=None, residuals=True, resid_step=10):
     colors = (_BLUE, _ORANGE)
     r2, r2_adj = results["r2"], results["r2_adj"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
-    fig.patch.set_facecolor(_SURFACE)
-
-    for eq in range(2):
-        for reg in range(2):
-            ax = axes[eq, reg]
-            ax.set_facecolor(_SURFACE)
-            y = coefs[:, eq, reg]
-            if p <= 30:
-                ax.stem(lags, y, basefmt=" ")
-            else:
-                ax.plot(lags, y, lw=1.2, color=colors[reg])
-            ax.axhline(0, color=_INK_2, lw=0.8)
-            ax.set_title(f"{names[reg]}(t-k) → {names[eq]}(t)", fontsize=11, color=_INK)
-            ax.set_xlabel("lag k")
-            ax.set_ylabel("coefficient")
-            ax.grid(True, color=_GRID, alpha=0.8)
-            if reg == 0:
-                k = _EQ[eq]
-                ax.annotate(f"in-sample R² = {r2[k]:.3f} (adj {r2_adj[k]:.3f})",
-                            xy=(0.02, 0.95), xycoords="axes fraction", va="top",
-                            fontsize=9, color=_INK_2)
-
     corr = sigma[0, 1] / np.sqrt(sigma[0, 0] * sigma[1, 1])
-    fig.suptitle(f"Reduced-form VAR({p}) - residual correlation volumes/returns = {corr:.3f}",
-                 fontsize=12, color=_INK)
-    plt.tight_layout()
 
-    if out_dir is not None:
-        out_dir = Path(out_dir)
-        fig.savefig(out_dir / "var_fit.png", dpi=150)
-        plt.close(fig)
-    else:
-        plt.show()
+    def draw_grid(values, ylabel, title_fmt, suptitle, filename, annotate_r2=False):
+        fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+        fig.patch.set_facecolor(_SURFACE)
+        for eq in range(2):
+            for reg in range(2):
+                ax = axes[eq, reg]
+                ax.set_facecolor(_SURFACE)
+                y = values[:, eq, reg]
+                if p <= 30:
+                    ax.stem(lags, y, basefmt=" ")
+                else:
+                    ax.plot(lags, y, lw=1.2, color=colors[reg])
+                ax.axhline(0, color=_INK_2, lw=0.8)
+                ax.set_title(title_fmt.format(reg=names[reg], eq=names[eq]),
+                             fontsize=11, color=_INK)
+                ax.set_xlabel("lag k")
+                ax.set_ylabel(ylabel)
+                ax.grid(True, color=_GRID, alpha=0.8)
+                if annotate_r2 and reg == 0:
+                    k = _EQ[eq]
+                    ax.annotate(f"in-sample R² = {r2[k]:.3f} (adj {r2_adj[k]:.3f})",
+                                xy=(0.02, 0.95), xycoords="axes fraction", va="top",
+                                fontsize=9, color=_INK_2)
+        fig.suptitle(suptitle, fontsize=12, color=_INK)
+        plt.tight_layout()
+        if out_dir is not None:
+            fig.savefig(Path(out_dir) / filename, dpi=150)
+            plt.close(fig)
+        else:
+            plt.show()
+
+    # Figure 1: coefficients per lag
+    draw_grid(coefs, "coefficient",
+              "{reg}(t-k) → {eq}(t)",
+              f"Reduced-form VAR({p}) - residual correlation volumes/returns = {corr:.3f}",
+              "var_fit.png", annotate_r2=True)
+
+    # Figure 2: cumulative coefficients, sum_{j<=k} coefficient_j
+    draw_grid(np.cumsum(coefs, axis=0), "cumulative sum of coefficients",
+              "Cumulative {reg}(t-k) → {eq}(t)",
+              f"Reduced-form VAR({p}) - cumulative coefficients",
+              "var_fit_cumulative.png")
 
     if residuals:
         plot_residuals(np.asarray(fitted.resid),
@@ -398,11 +408,11 @@ def trim_top_volume(prices, volumes, signs, top_frac=0.05):
 if __name__ == '__main__':
     paths = np.array(sorted(listdir('..\\database\\data')))   # sorted -> chronological order
 
-    p = 10
-    fitting_window = 100          # number of trading days used for the fit
+    p = 1000
+    fitting_window = 200          # number of trading days used for the fit
     bootstrap_residuals = True
     trim_top = True               # False restores the original behaviour
-    top_frac = 0.05               # fraction of largest |volume| trades dropped each day
+    top_frac = 0.01               # fraction of largest |volume| trades dropped each day
 
     name = f'var_reduced_{p}'
 
@@ -458,6 +468,8 @@ if __name__ == '__main__':
     else:
         print('No days left for out-of-sample evaluation')
 
+    exit()
+
     clear_data(name)
 
     # ---- Simulation for each day with the common model ----
@@ -479,4 +491,4 @@ if __name__ == '__main__':
             bootstrap=bootstrap_residuals
         )
 
-        #save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)
+        save_simulated_data(f"..\\{dir}\\" + path, prices_sim, volumes_sim)

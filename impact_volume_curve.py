@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from scipy.optimize import curve_fit
-from scipy.stats import chi2
 from scipy.odr import ODR, Model, RealData
 
 # ==========================================
@@ -32,7 +31,8 @@ os.makedirs(output_dir, exist_ok=True)
 
 #model = 'lmf_1.5_0.3_real_tim_sqrt'
 #model = 'var_reduced_1000'
-model = 'reg_delta_0.0_1000'
+model = 'reg_delta_0.5_1000'
+
 dir = 'meta'
 if model != "":
     dir = dir + "_" + model
@@ -188,21 +188,16 @@ for cfg in ranges_config:
         slope, intercept = out.beta
         slope_err, intercept_err = out.sd_beta
 
-        # out è l'oggetto restituito da odr.run()
-        chi2_val = out.sum_square
-        dof = len(log_y) - len(out.beta)  # N - k (con k=2)
+        # R^2 coefficient of determination, computed in log-log space
+        y_pred = slope * log_x + intercept
+        ss_res = np.sum((log_y - y_pred) ** 2)
+        ss_tot = np.sum((log_y - np.mean(log_y)) ** 2)
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
 
-        if dof > 0:
-            chi2_red = chi2_val / dof
-            p_value = chi2.sf(chi2_val, dof)
-
-        print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f} | Chi2_red: {chi2_red:.2f} | p-value: {p_value:.4e}")
+        print(f"[{cfg['label']}] Slope: {slope:.4f} ± {slope_err:.4f} | Intercept: {intercept:.4f} ± {intercept_err:.4f} | R2: {r2:.4f}")
 
         x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
         y_fit = (10**intercept) * (x_fit**slope)
-
-        # Formattazione p-value per la legenda (notazione scientifica se molto piccolo)
-        p_val_str = f"{p_value:.3f}" if p_value >= 0.001 else f"{p_value:.1e}"
 
         ax1.plot(
             x_fit,
@@ -210,7 +205,7 @@ for cfg in ranges_config:
             linestyle='--',
             linewidth=1.8,
             color=cfg['color'],
-            label=rf"Fit {cfg['label']}: ${slope:.3f} \pm {slope_err:.3f}$" + '\n' + rf"($\chi_\nu^2 = {chi2_red:.2f}$, $p = {p_val_str}$)"
+            label=rf"Fit {cfg['label']}: ${slope:.3f} \pm {slope_err:.3f}$" + '\n' + rf"($R^2 = {r2:.4f}$)"
         )
 
 # ==========================================

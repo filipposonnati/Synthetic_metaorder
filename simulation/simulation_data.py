@@ -12,7 +12,7 @@ import os
 from utils import clear_data, open_data, save_simulated_data
 from var import var_fit, simulate_var
 from var_reduced import var_reduced_fit, simulate_var_reduced
-from regression_delta import impact_simulate, impact_fit, save_impact_model, load_impact_model, plot_impact_fit
+from simulation.tim import impact_simulate, impact_fit, save_impact_model, load_impact_model, plot_impact_fit
 
 paths = np.array(listdir('..\\database\\data'))
 

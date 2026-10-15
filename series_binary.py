@@ -89,13 +89,13 @@ if __name__ == '__main__':
         {'nb_traders': 2, 'kind': 'power', 'exponent': 2.0}
     ]
 
-    num_events = 1_000_000   
+    num_events = 50_000_000   
     num_runs   = 5           
     
     rho_configs = [
         #{'type': 'markov_1', 'rho1': 0.0, 'rho2': 0.0, 'label_file': 'markov_0'},
         {'type': 'markov_1', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_1'},
-        {'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_2'},
+        #{'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_2'},
         #{'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.25, 'label_file': 'markov_3'},
     ]
 
