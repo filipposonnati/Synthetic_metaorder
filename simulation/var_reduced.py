@@ -61,12 +61,15 @@ def plot_residuals(residuals, names=("Volumes", "Returns"), save_path=None, step
 
 def plot_var_reduced_fit(results, out_dir=None, residuals=True, resid_step=10):
     """Plot the fit results (or of a model loaded from file).
-    If out_dir is given, figures are saved there (var_fit.png, var_fit_cumulative.png, residuals.png)
+    If out_dir is given, figures are saved there (var_fit.png, var_fit_cumulative.png, var_fit_std.png,
+    var_fit_cumulative_std.png, residuals.png)
     instead of being shown.
 
     2x2 grid of the coefficients vs lag: rows are the equations (volumes, returns),
     columns are the lagged regressors (volumes, returns).
     """
+    if out_dir is not None:
+        out_dir = Path(out_dir)
     p = results["p"]
     fitted = results["model"]
     coefs = np.asarray(fitted.coefs)          # (p, eq, regressor), 0 = volumes, 1 = returns
@@ -121,6 +124,22 @@ def plot_var_reduced_fit(results, out_dir=None, residuals=True, resid_step=10):
               "Cumulative {reg}(t-k) → {eq}(t)",
               f"Reduced-form VAR({p}) - cumulative coefficients",
               "var_fit_cumulative.png")
+
+    # Figures 3-4: standardized coefficients (before de-normalization), unit-free
+    coefs_std = getattr(fitted, "coefs_std", None)
+    if coefs_std is None:
+        print("coefs_std not available in this model (saved with an older version): "
+              "refit to get the standardized figures")
+    else:
+        coefs_std = np.asarray(coefs_std)
+        draw_grid(coefs_std, "standardized coefficient",
+                  "{reg}(t-k) → {eq}(t)",
+                  f"Reduced-form VAR({p}) - standardized coefficients (comparable)",
+                  "var_fit_std.png")
+        draw_grid(np.cumsum(coefs_std, axis=0), "cumulative standardized coefficient",
+                  "Cumulative {reg}(t-k) → {eq}(t)",
+                  f"Reduced-form VAR({p}) - cumulative standardized coefficients",
+                  "var_fit_cumulative_std.png")
 
     if residuals:
         plot_residuals(np.asarray(fitted.resid),
@@ -203,6 +222,15 @@ def var_reduced_fit(days, p=10, chunk=5000, plot=False):
     # beta rows are (lag, regressor), columns are equations -> coefs (p, eq, regressor)
     coefs = beta.reshape(p, k, k).transpose(0, 2, 1)
 
+    # Standardized coefficients: regressors AND dependent variable divided by their
+    # RMS (no intercept -> uncentered), i.e. the coefficients before de-normalization.
+    # They are unit-free, so volumes and returns can be compared directly.
+    # beta_std[i, j] = beta[i, j] * rms(x_i) / rms(y_j) = beta[i, j] * d_i / sqrt(sum y_j^2)
+    d_y = np.sqrt(sy2)
+    d_y[d_y == 0] = 1.0
+    beta_std = beta * d[:, None] / d_y[None, :]
+    coefs_std = beta_std.reshape(p, k, k).transpose(0, 2, 1)
+
     if plot:
         plot_residuals(resid)
 
@@ -212,7 +240,8 @@ def var_reduced_fit(days, p=10, chunk=5000, plot=False):
     return {
         "p": p,
         "n_obs": int(n),
-        "model": SimpleNamespace(coefs=coefs, resid=resid, sigma_u=sigma_u, k_ar=p, neqs=k),
+        "model": SimpleNamespace(coefs=coefs, coefs_std=coefs_std, resid=resid,
+                                 sigma_u=sigma_u, k_ar=p, neqs=k),
         "sigma_cov": sigma_u,
         "r2": {"volumes": float(r2[0]), "returns": float(r2[1])},
         "r2_adj": {"volumes": float(r2_adj[0]), "returns": float(r2_adj[1])},
@@ -363,13 +392,14 @@ def save_var_reduced_model(results, path):
         "r2_adj_volumes": float(results["r2_adj"]["volumes"]),
         "r2_adj_returns": float(results["r2_adj"]["returns"]),
     }
-    np.savez_compressed(
-        path,
-        meta=json.dumps(meta),
+    arrays = dict(
         coefs=np.asarray(fitted.coefs),
         resid=np.asarray(fitted.resid),
         sigma_u=np.asarray(fitted.sigma_u),
     )
+    if getattr(fitted, "coefs_std", None) is not None:
+        arrays["coefs_std"] = np.asarray(fitted.coefs_std)
+    np.savez_compressed(path, meta=json.dumps(meta), **arrays)
 
 
 def load_var_reduced_model(path):
@@ -379,13 +409,15 @@ def load_var_reduced_model(path):
     with np.load(path, allow_pickle=False) as f:
         meta = json.loads(str(f["meta"]))
         coefs, resid, sigma_u = f["coefs"], f["resid"], f["sigma_u"]
+        # models saved before this field existed have no standardized coefficients
+        coefs_std = f["coefs_std"] if "coefs_std" in f.files else None
 
     p = meta["p"]
     return {
         "p": p,
         "n_obs": meta["n_obs"],
-        "model": SimpleNamespace(coefs=coefs, resid=resid, sigma_u=sigma_u,
-                                 k_ar=p, neqs=coefs.shape[1]),
+        "model": SimpleNamespace(coefs=coefs, coefs_std=coefs_std, resid=resid,
+                                 sigma_u=sigma_u, k_ar=p, neqs=coefs.shape[1]),
         "sigma_cov": sigma_u,
         "r2": {"volumes": meta["r2_volumes"], "returns": meta["r2_returns"]},
         "r2_adj": {"volumes": meta["r2_adj_volumes"], "returns": meta["r2_adj_returns"]},
@@ -409,10 +441,10 @@ if __name__ == '__main__':
     paths = np.array(sorted(listdir('..\\database\\data')))   # sorted -> chronological order
 
     p = 1000
-    fitting_window = 200          # number of trading days used for the fit
+    fitting_window = 100          # number of trading days used for the fit
     bootstrap_residuals = True
     trim_top = True               # False restores the original behaviour
-    top_frac = 0.01               # fraction of largest |volume| trades dropped each day
+    top_frac = 0.05               # fraction of largest |volume| trades dropped each day
 
     name = f'var_reduced_{p}'
 
