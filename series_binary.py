@@ -87,136 +87,119 @@ if __name__ == '__main__':
     output_dir = 'images/meta_child_dist'
     os.makedirs(output_dir, exist_ok=True)
 
-    # Configurazioni aggiornate con l'aggiunta del coefficiente teorico 'lambda_theo'
+    # Configurazioni di esempio con possibili etichette duplicate se basate solo su N
     configurations = [
-        {'nb_traders': 1,  'kind': 'uniform', 'exponent': 0.0, 'lambda_theo': -np.log(2/3)},
-        {'nb_traders': 2,  'kind': 'uniform', 'exponent': 0.0, 'lambda_theo': np.log(1.5)},
-        #{'nb_traders': 2,  'kind': 'power',   'exponent': 2.0, 'lambda_theo': 0.3}
+        {'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.0, 'nb_traders': 1,  'kind': 'uniform', 'exponent': 0.0, 'lambda_theo': np.log(3/2)},
+        {'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.4, 'nb_traders': 1,  'kind': 'uniform', 'exponent': 0.0, 'lambda_theo': np.log(5/4)},
     ]
 
     num_events = 1_000_000      
+    file_tag = 'markov_2_N=1'
+
+    # RISOLUZIONE: Spostati FUORI dal ciclo per accumulare tutte le configurazioni correttamente
+    results = {}
+    config_meta = {}
+
+    for cfg in configurations:
+        r1 = cfg['rho1']
+        r2 = cfg['rho2']
+        sim_type = cfg['type']
+
+        nb_traders = cfg['nb_traders']
+        kind       = cfg['kind']
+        exponent   = float(cfg['exponent'])
+        
+        # RISOLUZIONE: Includiamo parametri distintivi (es. rho2) nella label per renderla unica
+        if nb_traders == 1:
+            label = f"N={nb_traders}"
+        elif kind == 'uniform':
+            label = f"N={nb_traders} {kind}"
+        else:
+            label = f"N={nb_traders} {kind} {exponent} "
+
+        if sim_type == 'markov_2':
+            label = label + f' $\\rho_1$={r1} $\\rho_2$={r2}'
+        
+        config_meta[label] = cfg
+        
+        print(f"Processing: {label}...")
+        lengths_acc = []
+        
+        if sim_type == 'markov_1':
+            signs = generate_correlated_binary_sequence(num_events, rho=r1)
+        elif sim_type == 'markov_2':
+            signs = generate_markov_order2_binary_sequence(num_events, r1=r1, r2=r2)
+        
+        run_lengths = process_one_file(signs, nb_traders, kind, exponent)
+        lengths_acc.append(run_lengths.to_numpy())
+
+        results[label] = np.concatenate(lengths_acc)
+
+    # ---------------------------------------------------------------------------
+    # 3. Semi-Log Plot: Dati empirici, Fit e Curva Teorica
+    # ---------------------------------------------------------------------------
     
-    rho_configs = [
-        #{'type': 'markov_1', 'rho1': 0.0, 'rho2': 0.0, 'label_file': 'markov_0'},
-        {'type': 'markov_1', 'rho1': 0.5, 'rho2': 0.0, 'label_file': 'markov_1'},
-        #{'type': 'markov_2', 'rho1': 0.5, 'rho2': 0.8, 'label_file': 'markov_2'}
-    ]
+    XMIN_MANUALE = 2
 
-    for cfg_rho in rho_configs:
-        r1 = cfg_rho['rho1']
-        r2 = cfg_rho['rho2']
-        sim_type = cfg_rho['type']
-        file_tag = cfg_rho['label_file']
+    fig, ax = plt.subplots(figsize=(8, 6))
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
 
-        print(f"\n==================================================")
-        print(f" Running Simulation for {file_tag} (type: {sim_type})")
-        print(f"==================================================")
+    for idx, (label, lengths) in enumerate(results.items()):
+        values, counts = np.unique(lengths, return_counts=True)
+        pmf = counts / counts.sum()
+        color = colors[idx % len(colors)]
 
-        results = {}
-        config_meta = {} # Dizionario per mappare l'etichetta alla sua configurazione teorica
+        # A. Scatter plot dei dati empirici
+        ax.plot(values, pmf, 'o', linestyle='none', color=color, alpha=0.7, label=f"Emp. {label}")
 
-        for cfg in configurations:
-            nb_traders = cfg['nb_traders']
-            kind       = cfg['kind']
-            exponent   = float(cfg['exponent'])
-            label      = f"N={nb_traders}, kind={kind}, exp={exponent}"
-            
-            config_meta[label] = cfg
-            
-            print(f"Processing: {label}...")
-            lengths_acc = []
-            
-            if sim_type == 'markov_1':
-                signs = generate_correlated_binary_sequence(num_events, rho=r1)
-            elif sim_type == 'markov_2':
-                signs = generate_markov_order2_binary_sequence(num_events, r1=r1, r2=r2)
-
-            #print(signs)
-            
-            run_lengths = process_one_file(signs, nb_traders, kind, exponent)
-            #print(f"Lunghezza media empirica: {np.mean(run_lengths):.4f} (attesa: 4.0)")
-
-            #print(run_lengths)
-            
-            lengths_acc.append(run_lengths.to_numpy())
-
-            results[label] = np.concatenate(lengths_acc)
-
-            #exit()
-
-        # ---------------------------------------------------------------------------
-        # 3. Semi-Log Plot: Dati empirici, Fit e Curva Teorica
-        # ---------------------------------------------------------------------------
+        # B. Fit esponenziale con xmin manuale tramite powerlaw
+        fit = powerlaw.Fit(lengths, discrete=True, xmin=XMIN_MANUALE, verbose=False)
+        lambda_fit = fit.exponential.parameter1
         
-        XMIN_MANUALE = 1
+        # B1. Calcolo analitico alternativo di lambda_hat basato sulla media della coda
+        tail_lengths = lengths[lengths >= XMIN_MANUALE]
+        if len(tail_lengths) > 0:
+            mean_tail = np.mean(tail_lengths - XMIN_MANUALE)
+            p_hat = mean_tail / (mean_tail + 1.0)
+            lambda_hat = -np.log(p_hat)
+        else:
+            lambda_hat = np.nan
 
-        fig, ax = plt.subplots(figsize=(8, 6))
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-
-        for idx, (label, lengths) in enumerate(results.items()):
-            values, counts = np.unique(lengths, return_counts=True)
-            pmf = counts / counts.sum()
-            color = colors[idx % len(colors)]
-
-            # A. Scatter plot dei dati empirici
-            ax.plot(values, pmf, 'o', linestyle='none', color=color, alpha=0.7, label=f"Emp. {label}")
-
-            # B. Fit esponenziale con xmin manuale tramite powerlaw
-            fit = powerlaw.Fit(lengths, discrete=True, xmin=XMIN_MANUALE, verbose=False)
-            lambda_fit = fit.exponential.parameter1
-            
-            # B1. Calcolo analitico alternativo di lambda_hat basato sulla media della coda (MLE geometrico)
-            tail_lengths = lengths[lengths >= XMIN_MANUALE]
-            if len(tail_lengths) > 0:
-                mean_tail = np.mean(tail_lengths - XMIN_MANUALE)
-                # Per una geometrica P(L) ~ exp(-lambda * L), la stima MLE è: lambda_hat = -log( mean / (mean + 1) )
-                # Oppure basata direttamente sulla relazione p_same: p_hat = mean / (mean + 1), lambda_hat = -log(p_hat)
-                p_hat = mean_tail / (mean_tail + 1.0)
-                lambda_hat = -np.log(p_hat)
-            else:
-                lambda_hat = np.nan
-
-            n_samples_tail = len(tail_lengths)
-            lambda_err = lambda_fit / np.sqrt(n_samples_tail) if n_samples_tail > 0 else 0.0
-            
-            x_fit = np.linspace(XMIN_MANUALE, values.max(), 200)
-            
-            idx_xmin = np.where(values == XMIN_MANUALE)[0]
-            p_xmin = pmf[idx_xmin[0]] if len(idx_xmin) > 0 else pmf[0]
-            y_fit = p_xmin * np.exp(-lambda_fit * (x_fit - XMIN_MANUALE))
-
-            # C. Plot della curva di fit (linea tratteggiata)
-            fit_label = f"Fit {idx+1} ($\\lambda_{{fit}}$={lambda_fit:.3f})"
-            ax.plot(x_fit, y_fit, linestyle='--', color=color, linewidth=1.5, label=fit_label)
-
-            idx_xmin_theo = np.where(values == 1)[0]
-            p_xmin_theo = pmf[idx_xmin_theo[0]] if len(idx_xmin_theo) > 0 else pmf[0]
-            x_theo = np.linspace(1, values.max(), 200)
-
-            # D. Plot della curva teorica (linea continua) basata su 'lambda_theo' in configurazione
-            cfg_current = config_meta[label]
-            if 'lambda_theo' in cfg_current:
-                lambda_theo = cfg_current['lambda_theo']
-                y_theo = p_xmin_theo * np.exp(-lambda_theo * (x_theo - 1))
-                theo_label = f"Theo {idx+1} ($\\lambda_{{theo}}$={lambda_theo:.3f})"
-                ax.plot(x_theo, y_theo, linestyle='-', color=color, linewidth=2.0, alpha=0.8, label=theo_label)
-
-            print(f"\n--- Results for '{label}' ({file_tag}) ---")
-            print(f"λ (fit)    : {lambda_fit:.4f} ± {lambda_err:.4f}")
-            print(f"λ (hat)    : {lambda_hat:.4f} (MLE geometrico su coda >= {XMIN_MANUALE})")
-            if 'lambda_theo' in cfg_current:
-                print(f"λ (theo)   : {cfg_current['lambda_theo']:.4f}")
-
-        # Formatting Semi-Log Plot
-        ax.set_yscale('log')
-        ax.set_xlabel("Meta-order Length")
-        ax.set_ylabel("Probability $P(L)$")
-        ax.grid(True, which="both", ls="--", alpha=0.5)
-        ax.legend(fontsize=8, loc='upper right')
-
-        plt.tight_layout()
+        n_samples_tail = len(tail_lengths)
+        lambda_err = lambda_fit / np.sqrt(n_samples_tail) if n_samples_tail > 0 else 0.0
         
-        filename = f"series_{file_tag}.png"
-        filepath = os.path.join(output_dir, filename)
-        plt.savefig(filepath, dpi=300)
-        print(f"\nFigure saved to '{filepath}'")
+        x_fit = np.linspace(XMIN_MANUALE, values.max(), 200)
+        
+        idx_xmin = np.where(values == XMIN_MANUALE)[0]
+        p_xmin = pmf[idx_xmin[0]] if len(idx_xmin) > 0 else pmf[0]
+
+        idx_xmin_theo = np.where(values == XMIN_MANUALE)[0]
+        x_theo = np.linspace(1, values.max(), 200)
+
+        # D. Plot della curva teorica basata su 'lambda_theo' in configurazione
+        cfg_current = config_meta[label]
+        if 'lambda_theo' in cfg_current:
+            lambda_theo = cfg_current['lambda_theo']
+            y_theo = p_xmin * np.exp(-lambda_theo * (x_theo - XMIN_MANUALE))
+            theo_label = f"Theory {label} ($\\lambda_{{theo}}$={lambda_theo:.3f})"
+            ax.plot(x_theo, y_theo, linestyle='-', color=color, linewidth=2.0, alpha=0.8, label=theo_label)
+
+        print(f"\n--- Results for '{label}' ({file_tag}) ---")
+        print(f"λ (fit)    : {lambda_fit:.4f} ± {lambda_err:.4f}")
+        print(f"λ (hat)    : {lambda_hat:.4f} (MLE geometrico su coda >= {XMIN_MANUALE})")
+        if 'lambda_theo' in cfg_current:
+            print(f"λ (theo)   : {cfg_current['lambda_theo']:.4f}")
+
+    # Formatting Semi-Log Plot
+    ax.set_yscale('log')
+    ax.set_xlabel("Meta-order Length")
+    ax.set_ylabel("Probability $P(L)$")
+    ax.grid(True, which="both", ls="--", alpha=0.5)
+    ax.legend(fontsize=8, loc='upper right')
+
+    plt.tight_layout()
+    
+    filename = f"series_{file_tag}.png"
+    filepath = os.path.join(output_dir, filename)
+    plt.savefig(filepath, dpi=300)
+    print(f"\nFigure saved to '{filepath}'")
