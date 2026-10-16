@@ -17,7 +17,7 @@ from lmf import simulate_lmf, simulate_lmf_lambda
 # ══════════════════════════════════════════════════════════════════════════════
 # PARAMETERS
 # ══════════════════════════════════════════════════════════════════════════════
-MAX_LAG       = 5_000      
+MAX_LAG       = 1_000      
 TOTAL_STEPS   = 10_000_000  
 
 LMF_ALPHA     = 1.5
@@ -95,7 +95,7 @@ def get_or_compute_lmf_lambda_acf(alpha, lam, total_steps, max_lag, p_trade_rand
 
 if __name__ == '__main__':
 
-    # ── 1. Load empirical ACF ─────────────────────────────────────────────────
+    # ── Load empirical ACF ─────────────────────────────────────────────────
     acf_binary_path = Path('database/acf_binary.npy')
     p_plus_path     = Path('database/p_plus.npy')
 
@@ -109,11 +109,11 @@ if __name__ == '__main__':
 
     print(f"Loaded empirical ACF  (max_lag={max_lag},  p_plus={p_plus:.4f})")
 
-    # ── 2. Pooled AR ACF ──────────────────────────────────────────────────────
+    # ── Pooled AR ACF ──────────────────────────────────────────────────────
     cache_path = Path("database/acf_ar.npy")
     if cache_path.is_file():
         pooled_ar = np.load(cache_path)
-        print("Loaded cached pooled ACF ar.")
+        print("Loaded cached pooled ACF AR")
     else:
         data_ar_dir = os.path.join('database', 'data_ar_1000')
         paths    = listdir(data_ar_dir)
@@ -128,6 +128,94 @@ if __name__ == '__main__':
         np.save(cache_path, pooled_ar)
         print("Saved pooled ACF to cache.")
 
+    # ── Pooled LMF ACF ──────────────────────────────────────────────────────
+    cache_path = Path("database/acf_lmf_1.5_100.npy")
+    if cache_path.is_file():
+        pooled_lmf_100 = np.load(cache_path)
+        print("Loaded cached pooled ACF LMF.")
+    else:
+        data_dir = os.path.join('database', 'data')
+        paths    = listdir(data_dir)
+        all_signs = []
+        for path in paths:
+            trades = pd.read_csv(os.path.join(data_dir, path), header=None)
+            signs  = trades[3].values.astype(float)
+            series_length = len(signs)
+
+            signs_lmf = simulate_lmf(1.5, 100, series_length)
+
+            all_signs.append(signs_lmf)
+
+        print("Computing pooled ACF …")
+        pooled_lmf_100 = pooled_acf_function(all_signs, nlags=max_lag)
+        np.save(cache_path, pooled_lmf_100)
+        print("Saved pooled ACF to cache.")
+
+    # ── Pooled LMF Lambda ACF ──────────────────────────────────────────────────────
+    cache_path = Path("database/acf_lmf_lambda_1.5_0.3.npy")
+    if cache_path.is_file():
+        pooled_lmf_lambda = np.load(cache_path)
+        print("Loaded cached pooled ACF LMF Lambda.")
+    else:
+        data_dir = os.path.join('database', 'data')
+        paths    = listdir(data_dir)
+        all_signs = []
+        for path in paths:
+            trades = pd.read_csv(os.path.join(data_dir, path), header=None)
+            signs  = trades[3].values.astype(float)
+            series_length = len(signs)
+
+            signs_lmf_lambda, _, _ = simulate_lmf_lambda(1.5, 0.3, series_length)
+
+            all_signs.append(signs_lmf_lambda)
+
+        print("Computing pooled ACF …")
+        pooled_lmf_lambda = pooled_acf_function(all_signs, nlags=max_lag)
+        np.save(cache_path, pooled_lmf_lambda)
+        print("Saved pooled ACF to cache.")
+
+    # ── Pooled LMF Lambda ACF ──────────────────────────────────────────────────────
+    cache_path = Path("database/acf_lmf_lambda_1.5_0.3_p_rand_0.27.npy")
+    if cache_path.is_file():
+        pooled_lmf_lambda_rand = np.load(cache_path)
+        print("Loaded cached pooled ACF LMF Lambda random.")
+    else:
+        data_dir = os.path.join('database', 'data')
+        paths    = listdir(data_dir)
+        all_signs = []
+        for path in paths:
+            trades = pd.read_csv(os.path.join(data_dir, path), header=None)
+            signs  = trades[3].values.astype(float)
+            series_length = len(signs)
+
+            signs_lmf_lambda_rand, _, _ = simulate_lmf_lambda(1.5, 0.3, series_length, p_trade_random=0.27)
+
+            all_signs.append(signs_lmf_lambda_rand)
+
+        print("Computing pooled ACF …")
+        pooled_lmf_lambda_rand = pooled_acf_function(all_signs, nlags=max_lag)
+        np.save(cache_path, pooled_lmf_lambda_rand)
+        print("Saved pooled ACF to cache.")
+
+# ── Pooled LMF Lambda ACF ──────────────────────────────────────────────────────
+    cache_path = Path("database/acf_nn.npy")
+    if cache_path.is_file():
+        pooled_nn = np.load(cache_path)
+        print("Loaded cached pooled ACF NN.")
+    else:
+        data_dir = os.path.join('database', 'data_nn')
+        paths    = listdir(data_dir)
+        all_signs = []
+        for path in paths:
+            trades = pd.read_csv(os.path.join(data_dir, path), header=None)
+            signs_nn  = trades[3].values.astype(float)
+            all_signs.append(signs_nn)
+
+        print("Computing pooled ACF …")
+        pooled_nn = pooled_acf_function(all_signs, nlags=max_lag)
+        np.save(cache_path, pooled_nn)
+        print("Saved pooled ACF to cache.")
+
     theory = 0.0550 * lags ** (-0.5)
 
     NUM_BINS = 50
@@ -140,53 +228,29 @@ if __name__ == '__main__':
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Empirical (real data)
+    # Empirical
     x_emp, y_emp = log_bin_acf(pooled_acf, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_emp, y_emp, marker='o', linestyle='-', color='black', lw=1.5, label='Empirical pooled ACF')
+    ax.loglog(x_emp, y_emp, marker='o', linestyle='-', color='black', lw=1.2, label='Empirical')
 
     # AR
     x_ar, y_ar = log_bin_acf(pooled_ar, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_ar, y_ar, marker='x', linestyle='-', color='red', lw=1.2, label='AR pooled ACF')
+    ax.loglog(x_ar, y_ar, marker='x', linestyle='-', color='red', lw=1.2, label='Volumes AR')
 
+    # LMF
+    x_lmf, y_lmf = log_bin_acf(pooled_lmf_100, max_lag, num_bins=NUM_BINS)
+    ax.loglog(x_lmf, y_lmf, marker='+', linestyle='-', color='blue', lw=1.2, label=r'LMF $\alpha = 1.5$ $N = 100$')
 
-    # ── 4. Fixed-N LMF (Cached) ──────────────────────────────────────────────
-    # N = 100
-    N_traders = 100
-    acf_fixed = get_or_compute_lmf_fixed_acf(LMF_ALPHA, N_traders, TOTAL_STEPS, max_lag)
-    x_fix, y_fix = log_bin_acf(acf_fixed, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_fix, y_fix, marker='^', linestyle='-', color='tomato', lw=1.2, alpha=0.8,
-              label=rf'LMF fixed-N  ($\alpha={LMF_ALPHA}$, $N={N_traders}$)')
+    # LMF Lambda
+    x_lmf_lambda, y_lmf_lambda = log_bin_acf(pooled_lmf_lambda, max_lag, num_bins=NUM_BINS)
+    ax.loglog(x_lmf_lambda, y_lmf_lambda, marker='v', linestyle='-', color='green', lw=1.2, label=r'LMF $\alpha = 1.5$ $\lambda = 0.3$')
 
-    # N = 50
-    N_traders = 50
-    acf_fixed = get_or_compute_lmf_fixed_acf(LMF_ALPHA, N_traders, TOTAL_STEPS, max_lag)
-    x_fix, y_fix = log_bin_acf(acf_fixed, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_fix, y_fix, marker='^', linestyle='-', color='red', lw=1.2, alpha=0.8,
-              label=rf'LMF fixed-N  ($\alpha={LMF_ALPHA}$, $N={N_traders}$)')
+    # LMF Lambda random
+    x_lmf_lambda_rand, y_lmf_lambda_rand = log_bin_acf(pooled_lmf_lambda_rand, max_lag, num_bins=NUM_BINS)
+    ax.loglog(x_lmf_lambda_rand, y_lmf_lambda_rand, marker='^', linestyle='-', color='orange', lw=1.2, label=r'LMF $\alpha = 1.5$ $\lambda = 0.3$ $p_{RAND} = 0.27$')
 
-
-    # ── 5. λ-model LMF (Cached) ──────────────────────────────────────────────
-    # lambda = 0.3, p_random = 0.0
-    LMF_LAMBDA = 0.3
-    acf_lambda = get_or_compute_lmf_lambda_acf(LMF_ALPHA, LMF_LAMBDA, TOTAL_STEPS, max_lag, p_trade_random=0.0)
-    x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_lam, np.abs(y_lam), marker='d', linestyle='-', color='seagreen', lw=1.2, alpha=0.8,
-              label=rf'LMF $\lambda$-model  ($\alpha={LMF_ALPHA}$, $\lambda={LMF_LAMBDA}$)')
-
-    # lambda = 0.3, p_random = 0.22
-    p_random = 0.22
-    acf_lambda = get_or_compute_lmf_lambda_acf(LMF_ALPHA, LMF_LAMBDA, TOTAL_STEPS, max_lag, p_trade_random=p_random)
-    x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_lam, np.abs(y_lam), marker='d', linestyle='-', color='green', lw=1.2, alpha=0.8,
-              label=rf'LMF $\lambda$-model  ($\alpha={LMF_ALPHA}$, $\lambda={LMF_LAMBDA}$, $p_{{RANDOM}} = {p_random}$)')
-
-    # lambda = 0.2, p_random = 0.22
-    LMF_LAMBDA = 0.2
-    acf_lambda = get_or_compute_lmf_lambda_acf(LMF_ALPHA, LMF_LAMBDA, TOTAL_STEPS, max_lag, p_trade_random=p_random)
-    x_lam, y_lam = log_bin_acf(acf_lambda, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_lam, np.abs(y_lam), marker='d', linestyle='-', color='blue', lw=1.2, alpha=0.8,
-              label=rf'LMF $\lambda$-model  ($\alpha={LMF_ALPHA}$, $\lambda={LMF_LAMBDA}$)')
-
+    # Neural Network
+    x_nn, y_nn = log_bin_acf(pooled_nn, max_lag, num_bins=NUM_BINS)
+    ax.loglog(x_nn, y_nn, marker='s', linestyle='-', color='purple', lw=1.2, label='Neural Network')
 
     # ── 6. Teoria e Output ────────────────────────────────────────────────────
     ax.loglog(lags, theory, color='black', lw=1.2, linestyle=':',
