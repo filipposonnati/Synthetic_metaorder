@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import powerlaw
+import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Configurazione
@@ -136,7 +137,7 @@ def plot_all(name: str, configs: list[dict] = None, lmf_init_conf=None, comparis
         ax.grid(True, lw=0.5, ls='--', alpha=0.6)
 
     for i, (stem, (_, data)) in enumerate(all_data.items()):
-        kw = dict(ls='', marker=markers[i % len(markers)], ms=3, color=colors[i % len(colors)], label=stem)
+        kw = dict(ls='', marker=markers[i % len(markers)], ms=3, color=colors[i % len(colors)], label=stem.replace("_", " "))
         x_vals, counts, ccdf = get_pdf_ccdf(data)
 
         traders_key = stem.split('_')[0]
@@ -195,7 +196,7 @@ def plot_all(name: str, configs: list[dict] = None, lmf_init_conf=None, comparis
 # ---------------------------------------------------------------------------
 # Griglia di confronto tra dati reali e simulazioni
 # ---------------------------------------------------------------------------
-def compare_all_distributions_grid(base_dir: Path, real_subdir: str, configs: list[dict] = None, x_log=False) -> None:
+def compare_all_distributions(base_dir: Path, real_subdir: str, configs: list[dict] = None, x_log=False) -> None:
     real_dir = base_dir / real_subdir
     sim_dirs = sorted([d for d in base_dir.iterdir() if d.is_dir() and d.name.startswith('meta_child_dist') and d != real_dir])
 
@@ -205,7 +206,7 @@ def compare_all_distributions_grid(base_dir: Path, real_subdir: str, configs: li
         print("[compare] Nessuna variante simulata trovata.")
         return
 
-    target_stems = None # = [build_filename(c['nb_traders'], c['kind'], c['exponent']) for c in configs] if configs else None
+    target_stems = [build_filename(c['nb_traders'], c['kind'], c['exponent']) for c in configs] if configs else None
 
     def _load_stems(directory: Path):
         loaded = {}
@@ -276,11 +277,6 @@ def compare_all_distributions_grid(base_dir: Path, real_subdir: str, configs: li
     fig.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"[save] {out_path}")
     plt.show()
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
 
 def plot_trader_distributions(configuration: str, min_orders_per_trader: int = 10, x_log: bool = True) -> None:
     """
@@ -357,12 +353,8 @@ if __name__ == '__main__':
         {'nb_traders': 20, 'kind': 'power', 'exponent': 2.0}
     ]
 
-    plot_all('meta_child_dist', configs=my_configs)
-    plot_all('meta_child_dist', configs=my_configs, x_log=True)
-
-
-
-
+    #plot_all('meta_child_dist', configs=my_configs)
+    #plot_all('meta_child_dist', configs=my_configs, x_log=True)
 
     my_configs = [
         {'nb_traders': 1, 'kind': 'uniform', 'exponent': 0.0},
@@ -370,26 +362,19 @@ if __name__ == '__main__':
         {'nb_traders': 20, 'kind': 'uniform', 'exponent': 0.0}
     ]
 
-    # Esecuzione di plot_all passando la lista di configurazioni
+    # Esecuzione di plot_all passando la lista di configurazioni: INUTILE
     #plot_all('meta_child_dist_lmf_lambda_1.5_0.3', configs=my_configs, lmf_init_conf=['lmf_lambda', 1.5, 0.3], comparison=True)
 
-
-
-
-
-    """
     my_configs = [
         {'nb_traders': 20, 'kind': 'uniform', 'exponent': 0.0},
-        {'nb_traders': 20, 'kind': 'power_law', 'exponent': 2.0}
+        {'nb_traders': 20, 'kind': 'power', 'exponent': 2.0},
     ]
 
     # Esecuzione della comparazione su griglia filtrando per le stesse configurazioni
-    compare_all_distributions_grid(BASE_DIR, REAL_SUBDIR, configs=my_configs)
-    """
-
-    # Esempio: legge 'database/meta/meta_4_uniform.csv' o il nome esatto della configurazione
-    config_scelta = "20_power_2.0"
+    compare_all_distributions(BASE_DIR, REAL_SUBDIR, configs=my_configs)
+    
     
     # Esegui l'analisi per singolo trader
+    #config_scelta = "20_power_2.0"
     #plot_trader_distributions(config_scelta, min_orders_per_trader=20)
     #plot_trader_distributions(config_scelta, min_orders_per_trader=20, x_log=False)

@@ -4,7 +4,7 @@ import os
 from os import listdir
 import methods
 from lmf import simulate_lmf, simulate_lmf_lambda
-from series_gaussian import generate_binary_sequence
+from series_binary_ar import generate_ar_p_binary_sequence
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,10 +80,12 @@ def generate(delta_map: dict[str, int],
                      signs_origin: str,
                      lmf_alpha: float = None,
                      lmf_nb_traders: int = None,
-                     lmf_lambda: float = None) -> dict[str, np.ndarray]:
+                     lmf_lambda: float = None,
+                     lmf_lambda_random = 0) -> dict[str, np.ndarray]:
     
     data_dir = 'database/data'
-    ar_data_dir = 'database/data_ar_1000'
+    ar_data_dir = 'database/data_tim_1.0_1000'
+    nn_data_dir = 'database/data_nn'
     paths = np.array(listdir(data_dir))
     max_delta = max(delta_map.values())
 
@@ -106,22 +108,30 @@ def generate(delta_map: dict[str, int],
             trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
             if signs_origin == "ar":
                 trades = pd.read_csv(f"{ar_data_dir}\\{path}", header=None)
+            if signs_origin == "nn":
+                trades = pd.read_csv(f"{nn_data_dir}\\{path}", header=None)
 
             # ── Resolve signs for this (iteration, file) pair ────────────────
             if signs_origin == 'lmf':
                 signs = simulate_lmf(lmf_alpha, lmf_nb_traders, len(trades))
             elif signs_origin == 'lmf_lambda':
-                signs, _, _ = simulate_lmf_lambda(lmf_alpha, lmf_lambda, len(trades))
+                signs, _, _ = simulate_lmf_lambda(lmf_alpha, lmf_lambda, len(trades), p_trade_random=lmf_lambda_random)
             elif signs_origin == 'gaussian':
-                signs = generate_binary_sequence(
-                    len(trades), p_plus=np.mean(np.array(trades[3])) + 0.5, N = 1_000_000
-                )
+                acf_file = 'database/acf_binary.npy'
+                acf_data = np.load(acf_file)
+                p_lags = 1000
+                target_rhos = acf_data[1:p_lags + 1].tolist()
+
+                signs = generate_ar_p_binary_sequence(len(trades), target_rhos=target_rhos)
             elif signs_origin == 'ar':
                 raw = np.array(trades[3])
                 signs = np.where(raw > 0, 1, -1)
             elif signs_origin == '':
                 # Real signs: column 3 contains raw signs in {0,1} or {-1,+1};
                 # normalise to +1 / -1 so the metaid logic is consistent.
+                raw = np.array(trades[3])
+                signs = np.where(raw > 0, 1, -1)
+            elif signs_origin == 'nn':
                 raw = np.array(trades[3])
                 signs = np.where(raw > 0, 1, -1)
             else:
@@ -139,6 +149,9 @@ def generate(delta_map: dict[str, int],
 
             print(f'  [{path}] signs resolved, {len(active_cfgs)} active config(s) processed.')
 
+            if signs_origin == 'nn':
+                break
+
         # Increment iteration counter for every active config
         for cfg in active_cfgs:
             stem = build_filename(cfg['nb_traders'], cfg['kind'], cfg['exponent'])
@@ -155,32 +168,41 @@ def generate(delta_map: dict[str, int],
 if __name__ == '__main__':
     # ── Signs settings ───────────────────────────────────────────────────────
     iterations     = 10      # TARGET number of iterations to reach
-    signs_origin   = ''  # 'lmf', 'gaussian', 'ar' or '' (real signs from data)
+    signs_origin   = 'gaussian'    # 'lmf', 'lmf_lambda', 'gaussian', 'ar', 'nn' or '' 
     
     lmf_alpha      = 1.5
-    lmf_nb_traders = 10
+    lmf_nb_traders = 100
     lmf_lambda     = 0.3
+    lmf_lambda_random = 0.27
 
-    # ── Load configurations from CSV ─────────────────────────────────────────
-    cfg_df = pd.read_csv('configurations.csv', comment="#")
-    configurations = cfg_df.to_dict(orient='records')
-    # Ensure exponent is float
-    for cfg in configurations:
-        cfg['exponent'] = float(cfg['exponent'])
-
-    print(f"Loaded {len(configurations)} configuration(s) from configurations.csv")
+    configurations = [
+        #{'nb_traders': 4, 'kind': 'power', 'exponent': 2.0}, 
+        #{'nb_traders': 4, 'kind': 'uniform', 'exponent': 0.0}, 
+        {'nb_traders': 20, 'kind': 'power', 'exponent': 2.0}, 
+        #{'nb_traders': 20, 'kind': 'power', 'exponent': 4.0}, 
+        {'nb_traders': 20, 'kind': 'uniform', 'exponent': 0.0}, 
+        #{'nb_traders': 40, 'kind': 'power', 'exponent': 2.0}, 
+        #{'nb_traders': 1, 'kind': 'uniform', 'exponent': 0.0}
+    ]
 
     # ── Results directory ─────────────────────────────────────────────────────
     if signs_origin == 'lmf':
         results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_nb_traders}'
     elif signs_origin == 'lmf_lambda':
-        results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_lambda}'
+        if lmf_lambda_random == 0:
+            results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_lambda}'
+        else:
+            results_dir = f'database\\meta_child_dist_{signs_origin}_{lmf_alpha}_{lmf_lambda}_{lmf_lambda_random}'
     elif signs_origin == 'gaussian':
         results_dir = f'database\\meta_child_dist_{signs_origin}'
     elif signs_origin == 'ar':
         results_dir = f'database\\meta_child_dist_{signs_origin}'
     elif signs_origin == '':
         results_dir = f'database\\meta_child_dist'
+    elif signs_origin == 'nn':
+        results_dir = f'database\\meta_child_dist_nn'
+    elif signs_origin == 'gaussian':
+        results_dir = f'database\\meta_child_dist_gaussian'
 
     os.makedirs(results_dir, exist_ok=True)
 
@@ -228,7 +250,8 @@ if __name__ == '__main__':
         signs_origin   = signs_origin,
         lmf_alpha      = lmf_alpha,
         lmf_lambda = lmf_lambda,
-        lmf_nb_traders=lmf_nb_traders
+        lmf_nb_traders=lmf_nb_traders,
+        lmf_lambda_random=lmf_lambda_random
     )
 
     # ── Save results for each config ──────────────────────────────────────────
