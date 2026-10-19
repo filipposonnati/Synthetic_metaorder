@@ -127,7 +127,7 @@ pe = p_eff(p_emp, rho1)
 for k in range(N):
     comp = w_th[k] * (1 - pe[k]) * pe[k] ** (n_vals - 1)
     ax.semilogy(n_vals, comp, '--', lw=1, label=f'{labels[k]}')
-ax.semilogy(n_vals, single, ':', color='k', label='Singolar geometrical (bigger trader)')
+ax.semilogy(n_vals, single, ':', color='k', label='Single geometric law')
 ax.set_xlabel('n')
 ax.set_ylabel('P(n)')
 ax.grid(True, which='both', alpha=0.3)
