@@ -10,7 +10,7 @@ import gc
 
 #model = 'lmf_1.5_0.3_real_tim_lin'
 #model = 'var_reduced_10'
-model = 'tim_param_0.5_1000'
+model = 'tim_param_0.3_1000'
 iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
 

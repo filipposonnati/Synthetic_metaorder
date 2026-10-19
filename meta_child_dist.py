@@ -1,3 +1,4 @@
+from math import nan
 import os
 from pathlib import Path
 import numpy as np
@@ -12,8 +13,12 @@ BASE_DIR = Path('database')
 REAL_SUBDIR = 'meta_child_dist'
 
 plt.rcParams.update({
-    'font.size': 12, 'axes.titlesize': 18, 'axes.labelsize': 14,
-    'xtick.labelsize': 11, 'ytick.labelsize': 11, 'legend.fontsize': 10
+    'font.size': 12,
+    'axes.titlesize': 20,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 14
 })
 
 # ---------------------------------------------------------------------------
@@ -25,12 +30,16 @@ def build_filename(nb_traders: int, kind: str, exponent: float) -> str:
     return f"{nb_traders}_{kind}" if kind == 'uniform' else f"{nb_traders}_{kind}_{exponent}"
 
 def get_pdf_ccdf(data: np.ndarray):
-    """Calcola sia la PDF che la CCDF per dati interi."""
+    """Calcola sia la PDF che la CCDF per dati interi, escludendo i valori con frequenza assoluta 1 o 2."""
     bins = np.arange(1, max(data) + 2)
-    counts, bin_edges = np.histogram(data, bins=bins, density=True)
+    raw_counts, bin_edges = np.histogram(data, bins=bins)
+    counts, _ = np.histogram(data, bins=bins, density=False)
     x_vals = bin_edges[:-1]
     ccdf = np.cumsum(counts[::-1])[::-1]
-    return x_vals, counts, ccdf
+    
+    # Filtra per rimuovere i punti in cui la frequenza assoluta è 1 o 2 nella coda
+    mask = raw_counts > 2
+    return x_vals[mask], counts[mask], ccdf[mask]
 
 def load_data(results_dir: Path, nb_traders: int = None, kind: str = None, exponent: float = None, stem: str = None):
     """Carica i dati .npz dato un insieme di parametri o direttamente uno stem."""
@@ -231,11 +240,18 @@ def compare_all_distributions(base_dir: Path, real_subdir: str, configs: list[di
 
     variant_names = list(sim_datasets.keys())
     colors = plt.cm.tab10.colors
+    # Sostituisci la definizione di real_style con questa:
+    clean_real_name = real_subdir.replace('meta_child_dist', '').replace('_', ' ').strip()
+    real_style = dict(ls='', marker='o', ms=3.5, color='black', alpha=0.9, label=clean_real_name if clean_real_name else 'real')
+
+    # E per i dictionary delle varianti simulate:
     styles = {
-        name: dict(ls='', marker='o', ms=3.5, color=colors[i % len(colors)], alpha=0.85, label=name)
+        name: dict(
+            ls='', marker='o', ms=3.5, color=colors[i % len(colors)], alpha=0.85, 
+            label=name.replace('meta_child_dist', '').replace('_', ' ').strip()
+        )
         for i, name in enumerate(variant_names)
     }
-    real_style = dict(ls='', marker='o', ms=3.5, color='black', alpha=0.9, label=real_subdir)
 
     n = len(stems)
     fig, axes = plt.subplots(n, 2, figsize=(13, 4.5 * n), squeeze=False)
@@ -278,12 +294,16 @@ def compare_all_distributions(base_dir: Path, real_subdir: str, configs: list[di
     print(f"[save] {out_path}")
     plt.show()
 
-def plot_trader_distributions(configuration: str, min_orders_per_trader: int = 10, x_log: bool = True) -> None:
+def plot_trader_distributions(configuration: str, min_orders_per_trader: int = 10, x_log: bool = True, data_model = '') -> None:
     """
     Legge il file database/meta/meta_{configuration}.csv e calcola la distribuzione
     della dimensione degli ordini (NbChild) separatamente per ciascun trader.
     """
-    csv_path = Path("database") / "meta" / f"meta_{configuration}.csv"
+    meta_dir = 'meta'
+    if data_model != '':
+        meta_dir = meta_dir + '_' + data_model
+    
+    csv_path = Path("database") / meta_dir / f"meta_{configuration}.csv"
     
     if not csv_path.exists():
         raise FileNotFoundError(f"File CSV non trovato: '{csv_path}'")
@@ -307,7 +327,7 @@ def plot_trader_distributions(configuration: str, min_orders_per_trader: int = 1
             continue
             
         x_vals, counts, ccdf = get_pdf_ccdf(nb_child_data)
-        
+
         kw = dict(
             ls='', 
             marker=markers[i % len(markers)], 
@@ -334,7 +354,7 @@ def plot_trader_distributions(configuration: str, min_orders_per_trader: int = 1
     
     output_dir = Path('images/meta_child_dist')
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"traders_{configuration}{'_log' if x_log else ''}.png"
+    out_path = output_dir / f"{f'{data_model}_' if data_model != '' else ''}traders_{configuration}{'_log' if x_log else ''}.png"
     
     fig.savefig(out_path, dpi=300)
     print(f"[save] Grafico salvato in: {out_path}")
@@ -375,6 +395,7 @@ if __name__ == '__main__':
     
     
     # Esegui l'analisi per singolo trader
-    #config_scelta = "20_power_2.0"
-    #plot_trader_distributions(config_scelta, min_orders_per_trader=20)
-    #plot_trader_distributions(config_scelta, min_orders_per_trader=20, x_log=False)
+    config_scelta = "20_uniform"
+    data_model = 'lmf_1.5_0.3_real_tim_lin'
+    #plot_trader_distributions(config_scelta, min_orders_per_trader=20, data_model=data_model)
+    #plot_trader_distributions(config_scelta, min_orders_per_trader=20, x_log=False, data_model=data_model)

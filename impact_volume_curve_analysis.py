@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from scipy.optimize import curve_fit
+from scipy.odr import ODR, Model, RealData
 import os
 
 # Global Plot Configuration
@@ -16,14 +16,14 @@ plt.rcParams.update({
     'legend.fontsize': 14
 })
 
-def linear_model(log_x, slope, intercept):
-    """Modello lineare per la scala logaritmica."""
-    return slope * log_x + intercept
+def linear_func(p, x):
+    """Modello lineare per ODR (spazio log-log): p = [slope, intercept]."""
+    return p[0] * x + p[1]
 
 def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
     """
-    Performs the exact 3-pass linear log-log fit with effective variance propagation
-    as implemented in impact_volume_complete.py.
+    Fit ODR in spazio log-log, identico a impact_volume_curve.py:
+    errori su X e Y (SEM propagati in log10), beta0=[1, 0].
     """
     if len(x_fit_data) <= 2:
         return None
@@ -33,7 +33,6 @@ def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
         x_sem = np.where(counts > 1, x_std / np.sqrt(counts), 1e-8)
         y_sem = np.where(counts > 1, y_std / np.sqrt(counts), 1e-8)
 
-        # Trasformazione nello spazio logaritmico
         log_x = np.log10(x_fit_data)
         log_y = np.log10(y_fit_data)
 
@@ -41,31 +40,16 @@ def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
         sigma_log_x = x_sem / (x_fit_data * np.log(10))
         sigma_log_y = y_sem / (y_fit_data * np.log(10))
 
-        # Evita errori zero o negativi
         sigma_log_x = np.maximum(sigma_log_x, 1e-6)
         sigma_log_y = np.maximum(sigma_log_y, 1e-6)
 
-        # Passaggio 1: Fit preliminare per stimare il coefficiente angolare (slope)
-        p0_fit, _ = curve_fit(linear_model, log_x, log_y, sigma=sigma_log_y, absolute_sigma=True)
-        slope_approx = p0_fit[0]
+        model_odr = Model(linear_func)
+        data = RealData(log_x, log_y, sx=sigma_log_x, sy=sigma_log_y)
+        out = ODR(data, model_odr, beta0=[1.0, 0.0]).run()
 
-        # Passaggio 2: Calcolo Errore Efficace nello spazio logaritmico
-        sigma_eff_log = np.sqrt(sigma_log_y**2 + (slope_approx * sigma_log_x)**2)
+        slope, intercept = out.beta
+        slope_err, intercept_err = out.sd_beta
 
-        # Passaggio 3: Fit finale con curve_fit usando gli errori efficaci
-        popt, pcov = curve_fit(
-            linear_model,
-            log_x,
-            log_y,
-            sigma=sigma_eff_log,
-            absolute_sigma=True
-        )
-
-        slope, intercept = popt
-        perr = np.sqrt(np.diag(pcov))
-        slope_err, intercept_err = perr[0], perr[1]
-
-        # Back-transform parameters to physical power-law terms
         delta = slope
         delta_err = slope_err
 
@@ -95,6 +79,9 @@ def bin_data(df, n_bins=51):
         MetaImpact_std=('MetaImpact', 'std'),
     ).dropna()
 
+    # Come in impact_volume_curve.py: solo bin con medie positive (necessario per il log)
+    grouped = grouped[(grouped['MetaVolume_mean'] > 0) & (grouped['MetaImpact_mean'] > 0)]
+
     return grouped, bins
 
 def load_model_data(model, file_name_con_estensione, min_child=2):
@@ -106,6 +93,7 @@ def load_model_data(model, file_name_con_estensione, min_child=2):
         path = os.path.join("database", folder_prefix, f"meta_{file_name_con_estensione}")
     # Legge solo le colonne necessarie
     data = pd.read_csv(path, usecols=['NbChild', 'MetaVolume', 'MetaImpact'])
+    data = data[data['MetaVolume'] > 0]   # come in impact_volume_curve.py
     return data[data['NbChild'] >= min_child]
 
 def model_display_name(model):
@@ -184,8 +172,12 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     ax1.set_xscale("log")
     ax1.set_yscale("log")
     ax1.set_xlabel(r'$Q$')
-    ax1.set_ylabel(r'$I(Q)$ (shifted)')
-    ax1.set_xlim([1e-6, 1e-2])
+    if vertical_shift != 1:
+        ax1.set_ylabel(r'$I(Q)$ (shifted)')
+    else:
+        ax1.set_ylabel(r'$I(Q)$')
+    ax1.set_xlim([1e-5, 1e-3])
+    ax1.set_ylim([2e-3, 2e-2])
 
     print(f"\n{'Rank':>5}  {'Model':<20}  {'delta':>7}  {'shift':>8}")
     print("-" * 50)
@@ -200,30 +192,31 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
 
         print(f"{rank:>5}  {label_base:<20}  {delta:>7.3f}  ×{shift:>7.2f}")
 
-        ax1.plot(
-            grouped['MetaVolume_mean'], grouped['MetaImpact_mean'] * shift,
-            marker='o', linestyle='', color=color, alpha=0.7, markersize=4
-        )
-
         x_line = np.logspace(
             np.log10(grouped_fit['MetaVolume_mean'].min()),
             np.log10(grouped_fit['MetaVolume_mean'].max()), 200
         )
-        shift_str = rf" ($\times {vertical_shift:.0f}^{{{shift_exp}}}$)" if shift_exp != 0 else ""
-        fit_label = rf"{label_base}: $\delta={delta:.3f} \pm {delta_err:.3f}$" + shift_str
+        shift_str = rf" ($\times {vertical_shift:.0f}^{{{shift_exp}}}$)" if shift_exp != 0 and vertical_shift != 1.0 else ""
+        fit_label = rf"{label_base.replace('_', ' ').capitalize()}: $\delta={delta:.2f} \pm {delta_err:.2f}$" + shift_str
+
         ax1.plot(
-            x_line, (Y * shift) * (x_line**delta),
-            linestyle='--', linewidth=1.8, color=color,
+            grouped['MetaVolume_mean'], grouped['MetaImpact_mean'] * shift,
+            marker='o', linestyle='', color=color, alpha=1.0, markersize=5
+        )
+
+        # E fai lo stesso per la linea di fit teorica
+        ax1.plot(
+            x_line, (Y * shift) * (x_line**(delta)),
+            linestyle='--', linewidth=2.0, color=color,
             label=fit_label, solid_capstyle='butt'
         )
 
     print("-" * 50)
 
     ax1.legend(
-        loc='upper center',
-        bbox_to_anchor=(0.5, -0.18),
-        fontsize=10,
-        ncol=2  # Dispone le voci della legenda su 2 colonne
+        loc='lower left',
+        bbox_to_anchor=(0.0, 1.02),
+        ncol=1
     )
     ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
     plt.tight_layout()
@@ -231,12 +224,39 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     plt.close()
     print(f"Comparison plot saved: {os.path.join('images', f'{image_name}.png')}")
 
+    return records
+
+def plot_delta_comparison(records, image_name):
+    """Crea un grafico a barre d'errore per confrontare direttamente i delta."""
+    labels = [r['label'].replace('_', ' ').capitalize() for r in records]
+    deltas = [r['fit'][1] for r in records]
+    delta_errs = [r['fit'][3] for r in records]
+
+    fig, ax = plt.subplots()
+    x_pos = np.arange(len(labels))
+    
+    # Disegna i punti con le barre d'errore
+    ax.errorbar(x_pos, deltas, yerr=delta_errs, fmt='.', elinewidth=1.5, capsize=4, color='black', ecolor='black')
+
+    # Linea di riferimento basata sui dati reali (il primo record)
+    ax.axhline(y=0.5, color='blue', linestyle='--', alpha=1.0)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels, rotation=30, ha='right')
+    ax.set_ylabel(r'$\delta$')
+    ax.grid(True, axis='y', linestyle=':', alpha=0.7)
+    #ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(os.path.join('images', f'{image_name}_delta_comparison.png'), dpi=150)
+    plt.close()
 
 if __name__ == "__main__":
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    models = ['', 'nn', 'reg_delta_1.0_1000', 'reg_delta_0.5_1000', 'reg_delta_0.0_1000', 'lmf_1.5_0.3_real_tim_sqrt', 'lmf_1.5_0.3_real_tim_lin', 'real_reg_lin', 'real_reg_sqrt', 'real_tim_sqrt', 'real_tim_lin']
+    models = ['', 'tim_1.0_1000', 'tim_0.5_1000', 'tim_0.0_1000']
+    #models = ['', 'tim_param_1.0_1000', 'tim_param_0.5_1000', 'tim_param_0.3_1000', 'tim_param_0.0_1000']
 
     target_dir = "impact_volume_curve_analysis"
     min_child = 2
@@ -247,12 +267,15 @@ if __name__ == "__main__":
 
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    img_comparison = f"{target_dir}/{function_clean}_comparison"
+    img_comparison = f"{target_dir}/tim_{function_clean}_comparison"
     print(f"Grafico di confronto complessivo: images/{img_comparison}.png")
-    plot_aggregate_comparison(
+    records = plot_aggregate_comparison(
         file_name_con_estensione,
         models=models,
         image_name=img_comparison,
-        vertical_shift=10.0,
+        vertical_shift=1.0,
         min_child=min_child,
     )
+
+    if records:
+        plot_delta_comparison(records, img_comparison)

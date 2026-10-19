@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from scipy.optimize import curve_fit
+from scipy.odr import ODR, Model, RealData
 
 # Global Plot Configuration
 plt.rcParams.update({
@@ -17,38 +17,59 @@ plt.rcParams.update({
 def power_law(x, Y, delta):
     return Y * x**delta
 
-def linear_func(x, m, q):
-    """Helper function for linear trend fitting."""
-    return m * x + q
+def linear_func(p, x):
+    """Modello lineare per ODR (spazio log-log): p = [slope, intercept]."""
+    return p[0] * x + p[1]
 
 def robust_power_law_fit(x, y, x_err, y_err, sample_count):
     """
-    Performs an iterative power-law fit on the 'core' high-density data.
+    Fit ODR in spazio log-log sui bin ad alta frequenza, identico a
+    impact_volume_curve.py (x_err, y_err sono gli SEM dei bin).
     """
-    core_mask = sample_count > (0.5 * sample_count.max())
-    xc, yc = x[core_mask], y[core_mask]
-    xerr_c, yerr_c = x_err[core_mask], y_err[core_mask]
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    x_err, y_err = np.asarray(x_err, float), np.asarray(y_err, float)
+    counts = np.asarray(sample_count)
 
-    if len(xc) < 2:
+    # Solo bin con medie positive, poi bin ad alta frequenza (>50% del massimo)
+    pos = (x > 0) & (y > 0)
+    x, y, x_err, y_err, counts = x[pos], y[pos], x_err[pos], y_err[pos], counts[pos]
+    if len(counts) == 0:
+        return None
+    core = counts > 0.5 * counts.max()
+    xc, yc, xerr_c, yerr_c, cc = x[core], y[core], x_err[core], y_err[core], counts[core]
+
+    if len(xc) <= 2:
         return None
 
     try:
-        # Initial fit ignoring errors
-        popt, _ = curve_fit(power_law, xc, yc, maxfev=5000)
-        Y, delta = popt
+        x_sem = np.where(cc > 1, xerr_c, 1e-8)
+        y_sem = np.where(cc > 1, yerr_c, 1e-8)
 
-        # Iterative fit propagating X and Y errors into effective sigma
-        for _ in range(10):
-            eff_err = np.sqrt(yerr_c**2 + (Y * delta * xc**(delta - 1) * xerr_c)**2)
-            popt, pcov = curve_fit(power_law, xc, yc, sigma=eff_err, absolute_sigma=True, maxfev=5000)
-            Y, delta = popt
-        
-        return Y, delta, np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1])
-    except:
+        log_x = np.log10(xc)
+        log_y = np.log10(yc)
+
+        sigma_log_x = np.maximum(x_sem / (xc * np.log(10)), 1e-6)
+        sigma_log_y = np.maximum(y_sem / (yc * np.log(10)), 1e-6)
+
+        model_odr = Model(linear_func)
+        data = RealData(log_x, log_y, sx=sigma_log_x, sy=sigma_log_y)
+        out = ODR(data, model_odr, beta0=[1.0, 0.0]).run()
+
+        slope, intercept = out.beta
+        slope_err, intercept_err = out.sd_beta
+
+        Y = 10**intercept
+        Y_err = np.log(10) * Y * intercept_err
+
+        return Y, slope, Y_err, slope_err
+    except Exception:
         return None
 
 def bin_data(df, n_bins=51):
     """Common logic to bin MetaVolume and calculate stats."""
+    df = df[df['MetaVolume'] > 0]   # come in impact_volume_curve.py
+    if df.empty:
+        return None
     v_min, v_max = df['MetaVolume'].min(), df['MetaVolume'].max()
     if v_min <= 0 or v_max <= 0 or v_min == v_max:
         return None
@@ -66,6 +87,7 @@ def bin_data(df, n_bins=51):
     # Calculate Standard Error of the Mean
     grouped['x_err'] = grouped['x_std'] / np.sqrt(grouped['count'])
     grouped['y_err'] = grouped['y_std'] / np.sqrt(grouped['count'])
+    grouped = grouped[(grouped['x'] > 0) & (grouped['y'] > 0)]
     
     return grouped, bins
 
@@ -152,7 +174,7 @@ def plot_stratified_impact(df, image_name, plot_range, n_bins=51):
 
 if __name__ == "__main__":
     model = ''
-    file_name_con_estensione = '20_uniform.csv'
+    file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
     folder_prefix = f"meta_tail_{model}" if model else "meta_tail"
@@ -170,9 +192,8 @@ if __name__ == "__main__":
 
         # Three stratified figures, each covering 10 consecutive NbChild values
         stratified_ranges = [
-            (range(2, 12), nome_img_stratificato),
-            (range(12, 22), f"{nome_img_stratificato}_12_21"),
-            (range(22, 32), f"{nome_img_stratificato}_22_31"),
+            (range(2, 12), f"{nome_img_stratificato}_1"),
+            (range(12, 22), f"{nome_img_stratificato}_2"),
         ]
 
         for plot_range, img_name in stratified_ranges:
@@ -180,7 +201,7 @@ if __name__ == "__main__":
             plot_stratified_impact(df_clean, img_name, plot_range)
 
         res_df = pd.DataFrame.from_dict(all_results, orient='index').sort_index()
-        res_df = res_df[(res_df.index > 1) & (res_df.index <= 26)]
+        res_df = res_df[(res_df.index > 1) & (res_df.index <= 21)]
 
         x_data = res_df.index.values
 
