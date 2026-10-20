@@ -29,11 +29,11 @@ def build_filename(nb_traders: int, kind: str, exponent: float) -> str:
         return "1"
     return f"{nb_traders}_{kind}" if kind == 'uniform' else f"{nb_traders}_{kind}_{exponent}"
 
-def get_pdf_ccdf(data: np.ndarray):
+def get_pdf_ccdf(data: np.ndarray, density = True):
     """Calcola sia la PDF che la CCDF per dati interi, escludendo i valori con frequenza assoluta 1 o 2."""
     bins = np.arange(1, max(data) + 2)
     raw_counts, bin_edges = np.histogram(data, bins=bins)
-    counts, _ = np.histogram(data, bins=bins, density=False)
+    counts, _ = np.histogram(data, bins=bins, density=density)
     x_vals = bin_edges[:-1]
     ccdf = np.cumsum(counts[::-1])[::-1]
     
@@ -130,17 +130,17 @@ def plot_all(name: str, configs: list[dict] = None, lmf_init_conf=None, comparis
 
     if show_ratio:
         ax_pdf, ax_ccdf, ax_ratio = axes
-        plot_configs = [(ax_pdf, 'PDF', 'P(x)'), (ax_ccdf, 'CCDF', 'P(X ≥ x)'), (ax_ratio, 'PDF Ratios', 'Ratio')]
+        plot_configs = [(ax_pdf, 'PDF', 'P(n)'), (ax_ccdf, 'CCDF', 'P(N ≥ n)'), (ax_ratio, 'PDF Ratios', 'Ratio')]
     else:
         ax_pdf, ax_ccdf = axes
         ax_ratio = None
-        plot_configs = [(ax_pdf, 'PDF', 'P(x)'), (ax_ccdf, 'CCDF', 'P(X ≥ x)')]
+        plot_configs = [(ax_pdf, 'PDF', 'P(n)'), (ax_ccdf, 'CCDF', 'P(N ≥ n)')]
 
     for ax, title, ylabel in plot_configs:
         if x_log:
             ax.set_xscale('log')
         ax.set_yscale('log')
-        ax.set_xlabel('x')
+        ax.set_xlabel('n')
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.grid(True, lw=0.5, ls='--', alpha=0.6)
@@ -379,11 +379,13 @@ if __name__ == '__main__':
     my_configs = [
         {'nb_traders': 1, 'kind': 'uniform', 'exponent': 0.0},
         {'nb_traders': 4, 'kind': 'uniform', 'exponent': 0.0},
-        {'nb_traders': 20, 'kind': 'uniform', 'exponent': 0.0}
+        {'nb_traders': 4, 'kind': 'power', 'exponent': 2.0},
+        {'nb_traders': 20, 'kind': 'uniform', 'exponent': 0.0},
+        {'nb_traders': 20, 'kind': 'power', 'exponent': 2.0}
     ]
 
-    # Esecuzione di plot_all passando la lista di configurazioni: INUTILE
-    #plot_all('meta_child_dist_lmf_lambda_1.5_0.3', configs=my_configs, lmf_init_conf=['lmf_lambda', 1.5, 0.3], comparison=True)
+    # Esecuzione di plot_all passando la lista di configurazioni
+    plot_all('meta_child_dist_lmf_lambda_1.5_0.3', configs=my_configs, lmf_init_conf=['lmf_lambda', 1.5, 0.3], comparison=True, x_log=True)
 
     my_configs = [
         {'nb_traders': 20, 'kind': 'uniform', 'exponent': 0.0},
@@ -391,7 +393,7 @@ if __name__ == '__main__':
     ]
 
     # Esecuzione della comparazione su griglia filtrando per le stesse configurazioni
-    compare_all_distributions(BASE_DIR, REAL_SUBDIR, configs=my_configs)
+    #compare_all_distributions(BASE_DIR, REAL_SUBDIR, configs=my_configs)
     
     
     # Esegui l'analisi per singolo trader

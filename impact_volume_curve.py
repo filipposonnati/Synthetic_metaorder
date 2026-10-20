@@ -30,9 +30,9 @@ output_dir = os.path.join('images', 'impact_volume_curve')
 os.makedirs(output_dir, exist_ok=True)
 
 #model = 'lmf_1.5_0.3_real_tim_sqrt'
-#model = 'var_reduced_1000'
+model = 'var_reduced_1000'
 #model = 'tim_param_0.3_1000'
-model = ''
+#model = ''
 
 dir = 'meta'
 if model != "":

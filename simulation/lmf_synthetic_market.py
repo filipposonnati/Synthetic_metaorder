@@ -1,20 +1,25 @@
 """
 lmf_synthetic_market.py
 =======================
-Simulatore di mercato sintetico (sostituisce lmf_tim.py e lmf_tim_no_param.py).
+Simulatore di mercato sintetico, giorno per giorno.
 
-PIPELINE (giorno per giorno)
-----------------------------
-  1. SEGNI   - Long Memory Flow (LMF)
-  2. VOLUMI  - 'empirical' | 'mem_acd' | 'log_ar'  (modulo volumes_generation)
-  3. PREZZI  - modello calibrato sul giorno reale con le funzioni di
-               real_data_price_gen e applicato a segni/volumi sintetici:
-                 'regression' : OLS su p+1 lag di sign*|v|^delta
-                 'tim'        : Transient Impact Model (kernel differenziato)
+PIPELINE
+--------
+  1. SEGNI   - Long Memory Flow (lmf.simulate_lmf / simulate_lmf_lambda)
+  2. VOLUMI  - senza segno, campionati con volumes_generation:
+                 'empirical' : bootstrap dai volumi reali del giorno
+                 'mem_acd'   : modello MEM/ACD gia' calibrato (models/mem_<dist>_<p>_<q>)
+                 'log_ar'    : AR(p) sui log-volumi gia' calibrato (models/logar_<p>)
+  3. PREZZI  - modello gia' calibrato e salvato, applicato ai volumi con segno
+               v_t = sign_t * volume_t:
+                 'tim'       : tim.py        (models/tim_<delta>_<p>), r semplici
+                 'tim_parametric' : tim_parametric.py  (models/tim_parametric_<delta>_<p>), log-rendimenti
 
-I timestamp dell'output sono quelli reali del giorno; segni, volumi e prezzi
-sono sintetici. Le funzioni di I/O, fit e simulazione dei prezzi (con la
-convenzione `impact_lag`) vengono tutte da real_data_price_gen.py.
+I modelli NON vengono ricalibrati: si caricano i model.npz prodotti dagli script di fit.
+I timestamp dell'output sono quelli reali del giorno; segni, volumi e prezzi sono sintetici.
+La lunghezza di ogni giorno e' quella del giorno reale. Per dare ai kernel di impatto
+(p volumi precedenti) una storia coerente, si generano n_trades + p trade e i primi p
+fanno da initial_v (poi scartati dall'output).
 """
 
 import sys
@@ -26,83 +31,137 @@ parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
 from lmf import simulate_lmf, simulate_lmf_lambda
-from volumes_generation import (
-    fit_ar_log_volume,
-    simulate_ar_log_volume,
-    fit_mem_acd,
-    simulate_mem_acd,
-    sample_empirical_volumes,
-)
-from real_data_price_gen import (
-    DEFAULT_DATA_DIR,
-    open_real_data,
-    save_simulated_data,
-    fit_ols,
-    simulate_ols,
-    fit_tim,
-    simulate_tim,
-)
+import volumes_generation as vg
+import tim
+import tim_parametric
+
+import pandas as pd
+
+DEFAULT_DATA_DIR = Path("..") / "database" / "data"
+
+
+# ---------------------------------------------------------------------------
+# I/O (CSV senza header: tempo [s], prezzo, volume, segno; stesso formato di methods.py)
+# ---------------------------------------------------------------------------
+
+def open_real_data(filename, data_dir=DEFAULT_DATA_DIR):
+    """Legge un giorno reale. Ritorna (timestamps, prices, volumes, signs)."""
+    df = pd.read_csv(Path(data_dir) / filename, header=None)
+    return (df[0].to_numpy(dtype=float), df[1].to_numpy(dtype=float),
+            np.abs(df[2].to_numpy(dtype=float)), df[3].to_numpy(dtype=float))
+
+
+def save_simulated_data(path, timestamps, prices, volumes, signs):
+    """Salva un giorno sintetico nello stesso formato dei dati reali."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({0: np.asarray(timestamps, dtype=float),
+                  1: np.asarray(prices, dtype=float),
+                  2: np.asarray(volumes, dtype=float),
+                  3: np.asarray(signs).astype(int)}
+                 ).to_csv(path, header=False, index=False)
+
 
 DEFAULT_OUT_DIR = Path("..") / "database" / "data_synthetic"
+MODELS_DIR = Path("..") / "models"
+
+
+# ---------------------------------------------------------------------------
+# CARICAMENTO MODELLI SALVATI
+# ---------------------------------------------------------------------------
+
+def _load(path, loader, what):
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"modello {what} non trovato: {path} "
+                                f"(eseguire prima lo script di fit corrispondente)")
+    return loader(path)
+
+
+def load_volume_model(volume_model, models_dir, p_ar, mem_p, mem_q, mem_dist):
+    """Ritorna i parametri del modello di volumi salvato (None per 'empirical')."""
+    if volume_model == "empirical":
+        return None
+    if volume_model == "log_ar":
+        name = f"logar_{p_ar}"
+    elif volume_model == "mem_acd":
+        name = f"mem_{mem_dist}_{mem_p}_{mem_q}"
+    else:
+        raise ValueError(f"volume_model sconosciuto: {volume_model!r}")
+    return _load(Path(models_dir) / name / "model.npz", vg.load_volume_model, name)
+
+
+def load_price_model(price_model, models_dir, delta, p_price):
+    """Ritorna il modello dei prezzi salvato."""
+    if price_model == "tim":
+        name = f"tim_{delta}_{p_price}"
+        return _load(Path(models_dir) / name / "model.npz", tim.load_impact_model, name)
+    if price_model == "tim_parametric":
+        name = f"tim_param_{delta}_{p_price}"
+        return _load(Path(models_dir) / name / "model.npz", tim_parametric.load_tim_param_model, name)
+    raise ValueError(f"price_model sconosciuto: {price_model!r}")
 
 
 # ---------------------------------------------------------------------------
 # LAYER 1 - SEGNI
 # ---------------------------------------------------------------------------
 
-def generate_signs(n_trades, alpha, n_traders=None, lambda_lmf=None):
+def generate_signs(n_steps, alpha, n_traders=None, lambda_lmf=None):
     if n_traders is not None:
-        signs = simulate_lmf(alpha, n_traders, n_trades)
+        signs = simulate_lmf(alpha, n_traders, n_steps)
     elif lambda_lmf is not None:
-        signs, _, _ = simulate_lmf_lambda(alpha, lambda_lmf, n_trades)
+        signs, _, _ = simulate_lmf_lambda(alpha, lambda_lmf, n_steps)
     else:
         raise ValueError("Fornire n_traders o lambda_lmf per LMF.")
     return np.asarray(signs, dtype=float)
 
 
 # ---------------------------------------------------------------------------
-# LAYER 2 - VOLUMI
+# LAYER 2 - VOLUMI (senza segno)
 # ---------------------------------------------------------------------------
 
-def generate_volumes(n_trades, volumes_real, volume_model, rng,
-                     mem_p=1, mem_q=1, mem_dist="burr12", ar_order=100):
-    if volume_model in ("empirical", "sample", "real"):
-        return sample_empirical_volumes(volumes_real, n_trades, rng)
-
-    if volume_model in ("mem_acd", "mem"):
-        params = fit_mem_acd([volumes_real], p=mem_p, q=mem_q, dist=mem_dist,
-                             sample_days=1, rng=rng)
-        return simulate_mem_acd(params, n_trades, rng)
-
+def generate_volumes(n_steps, volumes_real, volume_model, volume_params, rng):
+    if volume_model == "empirical":
+        return vg.sample_empirical_volumes(np.abs(volumes_real), n_steps, rng)
     if volume_model == "log_ar":
-        p_eff = ar_order if len(volumes_real) > ar_order else max(1, len(volumes_real) // 10)
-        params = fit_ar_log_volume([volumes_real], p=p_eff, sample_days=1, rng=rng)
-        return simulate_ar_log_volume(params, n_trades, rng)
-
+        return vg.simulate_ar_log_volume(volume_params, n_steps, rng)
+    if volume_model == "mem_acd":
+        return vg.simulate_mem_acd(volume_params, n_steps, rng)
     raise ValueError(f"volume_model sconosciuto: {volume_model!r}")
 
 
 # ---------------------------------------------------------------------------
-# LAYER 3 - PREZZI (calibrazione sul giorno reale, simulazione su segni/volumi sintetici)
+# LAYER 3 - PREZZI
 # ---------------------------------------------------------------------------
 
-def generate_prices(price_model, prices_real, volumes_real, signs_real,
-                    volumes_sim, signs_sim, P0, rng,
-                    p=1000, beta=0.25, delta=1.0, kernel_L=500,
-                    impact_lag=1, tick_size=None):
-    if price_model == "regression":
-        const, theta, sigma = fit_ols(prices_real, volumes_real, signs_real, p,
-                                      delta=delta, impact_lag=impact_lag)
-        return simulate_ols(P0, volumes_sim, signs_sim, const, theta, sigma, rng,
-                            delta=delta, impact_lag=impact_lag, tick_size=tick_size)
+def _tim_parametric_prices(rm, sim_v, initial_v, P0, rng, bootstrap):
+    """Prezzi dal TIM parametrico dati i volumi con segno (stessa logica di
+    tim_parametric.tim_parametric_simulate, ma con volumi esterni)."""
+    p = rm["p"]
+    n = len(sim_v)
+    K = tim_parametric.return_kernel(rm["beta"], rm["kernel_L"])
+    tv = tim_parametric.power_transform(np.concatenate([initial_v, sim_v]), rm["delta"])
+    X = tim_parametric._conv(tv, K)[p:p + n]
 
+    if bootstrap:
+        shocks = rm["resid"][rng.integers(0, len(rm["resid"]), size=n)]
+    else:
+        shocks = rng.normal(0.0, np.sqrt(rm["sigma2"]), n)
+    sim_r = rm["const"] + rm["sigma_f"] * X + shocks
+    return P0 * np.exp(np.concatenate([[0.0], np.cumsum(sim_r[:-1])]))
+
+
+def generate_prices(price_model, price_params, sim_v, initial_v, P0, rng, bootstrap=True):
+    """sim_v: volumi con segno (n_trades), initial_v: p volumi con segno precedenti."""
     if price_model == "tim":
-        L = min(kernel_L, len(prices_real) - 1)
-        const, sigma_f, sigma_eta = fit_tim(prices_real, volumes_real, signs_real,
-                                            beta, delta, L, impact_lag)
-        return simulate_tim(P0, volumes_sim, signs_sim, const, sigma_f, sigma_eta,
-                            beta, delta, L, rng, impact_lag, tick_size)
-
+        rm = price_params["return_model"]
+        prices, _ = tim.return_simulate(rm, sim_v, initial_v, initial_price=P0,
+                                        seed=rng.integers(0, 2**31 - 1),
+                                        bootstrap=bootstrap)
+        return prices
+    if price_model == "tim_parametric":
+        return _tim_parametric_prices(price_params["return_model"], sim_v, initial_v,
+                                 P0, rng, bootstrap)
     raise ValueError(f"price_model sconosciuto: {price_model!r}")
 
 
@@ -110,23 +169,23 @@ def generate_prices(price_model, prices_real, volumes_real, signs_real,
 # PIPELINE GIORNALIERA
 # ---------------------------------------------------------------------------
 
-def simulate_day(prices_real, volumes_real, signs_real, rng, *,
+def simulate_day(prices_real, volumes_real, rng, *,
                  alpha, n_traders, lambda_lmf,
-                 volume_model, mem_p, mem_q, mem_dist, ar_order,
-                 price_model, vol_lags_for_ret, beta, delta, kernel_L,
-                 impact_lag, tick_size):
+                 volume_model, volume_params,
+                 price_model, price_params, bootstrap):
     n_trades = len(prices_real)
     P0 = float(prices_real[0])
+    p = int(price_params["p"])
+    n_tot = n_trades + p
 
-    signs = generate_signs(n_trades, alpha, n_traders, lambda_lmf)
-    volumes = generate_volumes(n_trades, volumes_real, volume_model, rng,
-                               mem_p, mem_q, mem_dist, ar_order)
-    prices = generate_prices(price_model, prices_real, volumes_real, signs_real,
-                             volumes, signs, P0, rng,
-                             p=vol_lags_for_ret, beta=beta, delta=delta,
-                             kernel_L=kernel_L, impact_lag=impact_lag,
-                             tick_size=tick_size)
-    return prices, volumes, signs
+    signs_all = generate_signs(n_tot, alpha, n_traders, lambda_lmf)
+    vols_all = generate_volumes(n_tot, volumes_real, volume_model, volume_params, rng)
+    signed_all = signs_all * vols_all
+
+    initial_v, sim_v = signed_all[:p], signed_all[p:]
+    prices = generate_prices(price_model, price_params, sim_v, initial_v, P0, rng,
+                             bootstrap=bootstrap)
+    return prices, vols_all[p:], signs_all[p:]
 
 
 # ---------------------------------------------------------------------------
@@ -135,40 +194,40 @@ def simulate_day(prices_real, volumes_real, signs_real, rng, *,
 
 def run(data_dir=DEFAULT_DATA_DIR,
         out_dir=DEFAULT_OUT_DIR,
+        models_dir=MODELS_DIR,
         # segni
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
         # volumi
         volume_model="empirical",     # 'empirical' | 'mem_acd' | 'log_ar'
-        mem_dist="burr12",            # 'inverse_gaussian' | 'lognormal' | 'burr12'
+        mem_dist="burr12",
         mem_p=1,
         mem_q=1,
-        ar_order=100,
+        ar_order=1000,                # p del modello logar_<p> salvato
         # prezzi
-        price_model="tim",            # 'regression' | 'tim'
-        vol_lags_for_ret=1000,        # p per OLS
-        beta=0.25,                    # solo TIM
-        delta=1.0,                    # sign*|v|^delta (OLS e TIM)
-        kernel_L=500,                 # solo TIM
-        impact_lag=1,                 # 1: prezzo pre-trade; 0: prezzo di esecuzione
-        tick_size=None,
+        price_model="tim",            # 'tim' | 'tim_parametric'
+        delta=0.0,                    # delta usato nel fit (nome della cartella del modello)
+        p_price=1000,                 # p usato nel fit (nome della cartella del modello)
+        bootstrap=True,               # shock dei rendimenti: bootstrap dei residui o gaussiani
         pattern="*.csv",
         seed=42):
-
-    if price_model not in ("regression", "tim"):
-        raise ValueError(f"price_model sconosciuto: {price_model!r}")
 
     rng = np.random.default_rng(seed)
     data_dir = Path(data_dir)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    volume_params = load_volume_model(volume_model, models_dir, ar_order,
+                                      mem_p, mem_q, mem_dist)
+    price_params = load_price_model(price_model, models_dir, delta, p_price)
+
     files = sorted(f for f in data_dir.glob(pattern) if f.is_file())
     if not files:
         raise FileNotFoundError(f"nessun file '{pattern}' in {data_dir}")
 
-    print(f"Simulazione giorno per giorno | segni=LMF | volumi={volume_model} | prezzi={price_model}")
+    print(f"Simulazione giorno per giorno | segni=LMF | volumi={volume_model} | "
+          f"prezzi={price_model} (p={price_params['p']}, delta={price_params['delta']})")
 
     n_done = 0
     for f in files:
@@ -176,13 +235,11 @@ def run(data_dir=DEFAULT_DATA_DIR,
 
         try:
             prices, volumes, signs = simulate_day(
-                prices_real, volumes_real, signs_real, rng,
+                prices_real, volumes_real, rng,
                 alpha=alpha, n_traders=n_traders, lambda_lmf=lambda_lmf,
-                volume_model=volume_model, mem_p=mem_p, mem_q=mem_q,
-                mem_dist=mem_dist, ar_order=ar_order,
-                price_model=price_model, vol_lags_for_ret=vol_lags_for_ret,
-                beta=beta, delta=delta, kernel_L=kernel_L,
-                impact_lag=impact_lag, tick_size=tick_size)
+                volume_model=volume_model, volume_params=volume_params,
+                price_model=price_model, price_params=price_params,
+                bootstrap=bootstrap)
         except ValueError as e:
             print(f"  !! Giorno {f.name} saltato: {e}")
             continue
@@ -197,17 +254,14 @@ def run(data_dir=DEFAULT_DATA_DIR,
 if __name__ == "__main__":
     run(
         data_dir=DEFAULT_DATA_DIR,
-        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_real_reg_lin",
+        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_empirical_tim_param_0.3_1000",
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
         volume_model="empirical",   # 'empirical' | 'mem_acd' | 'log_ar'
-        price_model="regression",          # 'regression' | 'tim'
-        vol_lags_for_ret=1000,
-        beta=0.25,
-        delta=1.0,
-        kernel_L=500,
-        impact_lag=1,
-        tick_size=None,
+        price_model="tim_parametric",          # 'tim' | 'tim_parametric'
+        delta=0.3,
+        p_price=1000,
+        bootstrap=True,
         seed=42,
     )

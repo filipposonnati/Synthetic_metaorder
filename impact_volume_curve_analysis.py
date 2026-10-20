@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import matplotlib.ticker as mticker
 from scipy.odr import ODR, Model, RealData
 import os
 
@@ -56,7 +57,13 @@ def robust_power_law_fit(x_fit_data, y_fit_data, x_std, y_std, counts):
         Y = 10**intercept
         Y_err = np.log(10) * Y * intercept_err
 
-        return Y, delta, Y_err, delta_err
+        # R² in spazio log-log sui bin usati per il fit
+        resid = log_y - (slope * log_x + intercept)
+        ss_res = np.sum(resid ** 2)
+        ss_tot = np.sum((log_y - log_y.mean()) ** 2)
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+
+        return Y, delta, Y_err, delta_err, r2
     except Exception:
         return None
 
@@ -166,9 +173,10 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     # Sort ascending by delta
     records.sort(key=lambda r: r['fit'][1])
     n = len(records)
+    inset_items = []
     palette = cm.tab10(np.linspace(0, 1, max(n, 1)))
 
-    fig, ax1 = plt.subplots(figsize=(10, 12))
+    fig, ax1 = plt.subplots(figsize=(10, 10))
     ax1.set_xscale("log")
     ax1.set_yscale("log")
     ax1.set_xlabel(r'$Q$')
@@ -176,8 +184,6 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
         ax1.set_ylabel(r'$I(Q)$ (shifted)')
     else:
         ax1.set_ylabel(r'$I(Q)$')
-    ax1.set_xlim([1e-5, 1e-3])
-    ax1.set_ylim([2e-3, 2e-2])
 
     print(f"\n{'Rank':>5}  {'Model':<20}  {'delta':>7}  {'shift':>8}")
     print("-" * 50)
@@ -187,7 +193,7 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
         shift = vertical_shift ** shift_exp
         grouped = rec['grouped']
         grouped_fit = rec['grouped_fit']
-        Y, delta, Y_err, delta_err = rec['fit']
+        Y, delta, Y_err, delta_err, r2 = rec['fit']
         label_base = rec['label']
 
         print(f"{rank:>5}  {label_base:<20}  {delta:>7.3f}  ×{shift:>7.2f}")
@@ -197,7 +203,8 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
             np.log10(grouped_fit['MetaVolume_mean'].max()), 200
         )
         shift_str = rf" ($\times {vertical_shift:.0f}^{{{shift_exp}}}$)" if shift_exp != 0 and vertical_shift != 1.0 else ""
-        fit_label = rf"{label_base.replace('_', ' ').capitalize()}: $\delta={delta:.2f} \pm {delta_err:.2f}$" + shift_str
+        fit_label = (rf"{label_base.replace('_', ' ').capitalize()}: "
+                     rf"$\delta={delta:.2f} \pm {delta_err:.2f}$, $R^2={r2:.3f}$" + shift_str)
 
         ax1.plot(
             grouped['MetaVolume_mean'], grouped['MetaImpact_mean'] * shift,
@@ -205,17 +212,57 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
         )
 
         # E fai lo stesso per la linea di fit teorica
+        y_line = (Y * shift) * (x_line**(delta))
         ax1.plot(
-            x_line, (Y * shift) * (x_line**(delta)),
+            x_line, y_line,
             linestyle='--', linewidth=2.0, color=color,
             label=fit_label, solid_capstyle='butt'
         )
 
+        # Dati per l'inset sull'area di fitting
+        inset_items.append(dict(
+            color=color, x_line=x_line, y_line=y_line,
+            x_pts=grouped_fit['MetaVolume_mean'].values,
+            y_pts=grouped_fit['MetaImpact_mean'].values * shift,
+        ))
+
     print("-" * 50)
 
+    # --- Inset: zoom sull'area di fitting (in basso a destra) ---
+    x_lo = min(it['x_line'].min() for it in inset_items)
+    x_hi = max(it['x_line'].max() for it in inset_items)
+    y_lo = min(min(it['y_line'].min(), it['y_pts'].min()) for it in inset_items)
+    y_hi = max(max(it['y_line'].max(), it['y_pts'].max()) for it in inset_items)
+    # piccolo margine (in scala log)
+    x_lo, x_hi = x_lo / 1.15, x_hi * 1.15
+    y_lo, y_hi = y_lo / 1.15, y_hi * 1.15
+
+    axins = ax1.inset_axes([0.52, 0.07, 0.45, 0.35])
+    axins.set_xscale("log")
+    axins.set_yscale("log")
+    for it in inset_items:
+        axins.plot(it['x_pts'], it['y_pts'], marker='o', linestyle='',
+                   color=it['color'], markersize=4)
+        axins.plot(it['x_line'], it['y_line'], linestyle='--', linewidth=1.8,
+                   color=it['color'], solid_capstyle='butt')
+    axins.set_xlim(x_lo, x_hi)
+    axins.set_ylim(y_lo, y_hi)
+    # Tick radi: solo pochi major (1, 2, 5 x 10^n) e nessuna etichetta sui minor,
+    # altrimenti i numeri sull'asse x dell'inset si sovrappongono
+    for axis in (axins.xaxis, axins.yaxis):
+        axis.set_major_locator(mticker.LogLocator(base=10, subs=(1.0, 2.0, 5.0), numticks=20))
+        axis.set_major_formatter(mticker.LogFormatterSciNotation(base=10, labelOnlyBase=False))
+        axis.set_minor_locator(mticker.NullLocator())
+        axis.set_minor_formatter(mticker.NullFormatter())
+    axins.tick_params(labelsize=8)
+    axins.grid(True, which='both', linewidth=0.6, alpha=0.6)
+    axins.set_facecolor('white')
+    # rettangolo sull'area zoomata + linee di collegamento
+    ax1.indicate_inset_zoom(axins, edgecolor='black', alpha=0.8)
+
     ax1.legend(
-        loc='lower left',
-        bbox_to_anchor=(0.0, 1.02),
+        loc='upper left',
+        bbox_to_anchor=(0.0, 1.0),
         ncol=1
     )
     ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
@@ -257,6 +304,7 @@ if __name__ == "__main__":
 
     models = ['', 'tim_1.0_1000', 'tim_0.5_1000', 'tim_0.0_1000']
     #models = ['', 'tim_param_1.0_1000', 'tim_param_0.5_1000', 'tim_param_0.3_1000', 'tim_param_0.0_1000']
+    models = ['', 'var_reduced_1000']
 
     target_dir = "impact_volume_curve_analysis"
     min_child = 2
@@ -267,7 +315,7 @@ if __name__ == "__main__":
 
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    img_comparison = f"{target_dir}/tim_{function_clean}_comparison"
+    img_comparison = f"{target_dir}/var_reduced_{function_clean}_comparison"
     print(f"Grafico di confronto complessivo: images/{img_comparison}.png")
     records = plot_aggregate_comparison(
         file_name_con_estensione,
