@@ -41,46 +41,72 @@ def sample_metaorder_length(dist_type='pareto', alpha=1.5, **kwargs):
 def power_law(x, constant, alpha):
     return constant * x**alpha
 
-def simulate_lmf(alpha, n_traders, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None, p_trade_random=0.0):
+def simulate_lmf(alpha, n_traders, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None,
+                 p_trade_random=0.0, return_meta_ids=False):
     """
     Advanced simulation: pool of traders with overlapping metaorders.
     
     p_trade_random : float, opzionale
         Probabilità (tra 0.0 e 1.0) che la transazione corrente sia rumore con segno casuale
         anziché provenire da un metaordine.
+    return_meta_ids : bool, opzionale (default False)
+        Se True, oltre ai segni restituisce un array di interi (stessa lunghezza di
+        order_flow) con l'identificativo del metaordine a cui appartiene ogni trade.
+        Gli ID sono progressivi (0, 1, 2, ...) in ordine di creazione del metaordine;
+        i trade di rumore (p_trade_random) non appartengono a nessun metaordine e
+        hanno ID = -1.
+
+    Returns
+    -------
+    order_flow : np.ndarray
+        Segni degli ordini eseguiti.
+    meta_ids : np.ndarray (solo se return_meta_ids=True)
+        ID del metaordine di ogni trade (-1 per i trade di rumore).
     """
     if dist_kwargs is None:
         dist_kwargs = {}
 
-    trader_state = np.zeros((n_traders, 2), dtype=int)
+    # colonne: [segno, lunghezza residua, id metaordine]
+    trader_state = np.zeros((n_traders, 3), dtype=np.int64)
+    id_counter = 0
     
     def get_new_metaorder():
+        nonlocal id_counter
         length = sample_metaorder_length(dist_type=dist_type, alpha=alpha, **dist_kwargs)
         side = np.sign(np.random.rand() - (1 - p_plus))
-        return side, length
+        meta_id = id_counter
+        id_counter += 1
+        return side, length, meta_id
 
     for i in range(n_traders):
         trader_state[i] = get_new_metaorder()
 
     order_flow = np.zeros(total_steps)
+    meta_ids = np.full(total_steps, -1, dtype=np.int64) if return_meta_ids else None
 
     for t in range(total_steps):
         # Con probabilità p_trade_random viene generata una transazione totalmente casuale
         if p_trade_random > 0.0 and np.random.random() < p_trade_random:
             order_flow[t] = np.sign(np.random.rand() - (1 - p_plus))
+            # meta_ids[t] resta -1 (nessun metaordine)
         else:
             idx = np.random.randint(0, n_traders)
-            side, remaining = trader_state[idx]
+            side, remaining, meta_id = trader_state[idx]
             order_flow[t] = side
+            if return_meta_ids:
+                meta_ids[t] = meta_id
             remaining -= 1
             if remaining <= 0:
                 trader_state[idx] = get_new_metaorder()
             else:
                 trader_state[idx, 1] = remaining
-            
+
+    if return_meta_ids:
+        return order_flow, meta_ids
     return order_flow
 
-def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None, p_trade_random=0.0):
+def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto', dist_kwargs=None,
+                        p_trade_random=0.0, return_meta_ids=False):
     """
     λ-model simulation di Lillo, Mike & Farmer (2005) con tracciamento dei metaordini.
     
@@ -101,6 +127,10 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
     p_trade_random : float, optional (default=0.0)
         Probabilità che al tempo t venga eseguita una transazione dal segno casuale 
         anziché consumare una quota di un metaordine attivo.
+    return_meta_ids : bool, optional (default=False)
+        Se True, restituisce come quarto elemento un array di interi (lunghezza
+        total_steps) con l'ID del metaordine di ogni trade, corrispondente al campo
+        "id" di storico_metaordini. I trade di rumore hanno ID = -1.
         
     Returns
     -------
@@ -110,6 +140,8 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
         Numero di ordini attivi nel pool per ogni istante t.
     storico_metaordini : list of dict
         Registro di tutti i metaordini completati durante la simulazione.
+    meta_ids : np.ndarray (solo se return_meta_ids=True)
+        ID del metaordine di ogni trade (-1 per i trade di rumore).
     """
     if dist_kwargs is None:
         dist_kwargs = {}
@@ -144,6 +176,7 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
  
     order_flow = np.zeros(total_steps, dtype=np.int8)
     n_active   = np.zeros(total_steps, dtype=np.int32)
+    meta_ids   = np.full(total_steps, -1, dtype=np.int64) if return_meta_ids else None
     
     # Registro in cui salveremo i dati dei metaordini conclusi
     storico_metaordini = []
@@ -161,6 +194,7 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
         # Verifica se generare un trade dal segno casuale (noise trade)
         if p_trade_random > 0.0 and np.random.random() < p_trade_random:
             order_flow[t] = np.sign(np.random.rand() - (1 - p_plus))
+            # meta_ids[t] resta -1 (nessun metaordine)
         else:
             n = len(pool)
             idx = np.random.randint(0, n)
@@ -169,6 +203,8 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
             side, remaining, o_id, L_init, t_birth = pool[idx]
             
             order_flow[t] = side
+            if return_meta_ids:
+                meta_ids[t] = o_id
             remaining -= 1
             
             if remaining <= 0:
@@ -196,13 +232,9 @@ def simulate_lmf_lambda(alpha, lam, total_steps, p_plus=0.5, dist_type='pareto',
             )
             warned_large = True
  
+    if return_meta_ids:
+        return order_flow, n_active, storico_metaordini, meta_ids
     return order_flow, n_active, storico_metaordini
-
-import numpy as np
-import matplotlib.pyplot as plt
-from statsmodels.tsa.stattools import acf
-from scipy.optimize import curve_fit
-import warnings
 
 def plot(
     alphas,
