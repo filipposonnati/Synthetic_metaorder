@@ -6,9 +6,8 @@ from scipy.optimize import curve_fit
 from scipy.odr import ODR, Model, RealData
 
 # ==========================================
-# FLAG & STYLING CONFIGURATION
+# STYLING CONFIGURATION
 # ==========================================
-show_q_dist = True  # Flag to display Q distribution on the right axis
 
 plt.rcParams.update({
     'font.size': 12,
@@ -29,10 +28,14 @@ def linear_model(log_x, slope, intercept):
 output_dir = os.path.join('images', 'impact_volume_curve')
 os.makedirs(output_dir, exist_ok=True)
 
+show_q_dist = False  # Flag to display Q distribution on the right axis
+
 model = 'lmf_1.5_0.3_empirical_tim_param_0.3_1000'
 #model = 'var_reduced_1000'
 #model = 'tim_param_0.3_1000'
 #model = ''
+
+algorithm = 'maitrier' # 'maitrier' or lmf
 
 dir = 'meta'
 if model != "":
@@ -43,10 +46,15 @@ nb_traders = 20
 kind = 'power'
 exponent = 2.0
 
-if kind == 'uniform':
-    conf = f'{nb_traders}_{kind}'
-else:
-    conf = f'{nb_traders}_{kind}_{exponent}'
+if algorithm == 'maitrier':
+    if nb_traders == 1:
+        conf = f'{nb_traders}'
+    elif kind == 'uniform':
+        conf = f'{nb_traders}_{kind}'
+    else:
+        conf = f'{nb_traders}_{kind}_{exponent}'
+if algorithm == 'lmf':
+    conf = 'lmf'
 
 path = 'meta_' + conf
 
@@ -55,8 +63,8 @@ path = 'meta_' + conf
 # ==========================================
 ranges_config = [
     {'min_val': 1, 'op': '>', 'label': r'$n > 1$', 'marker': 'o', 'color': 'tab:blue'},
-    #{'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
-    #{'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
+    {'min_val': 5,  'op': '>=', 'label': r'$n \geq 5$',  'marker': 's', 'color': 'tab:orange'},
+    {'min_val': 10, 'op': '>=', 'label': r'$n \geq 10$', 'marker': '^', 'color': 'tab:green'}
 ]
 
 fig, ax1 = plt.subplots(figsize=(10, 7))
@@ -250,9 +258,9 @@ else:
 plt.tight_layout()
 
 if model == '':
-    filepath = os.path.join(output_dir, conf + '.png')
+    filepath = os.path.join(output_dir, conf + f'{"" if len(ranges_config) == 1 else "_comparison"}.png')
 else:
-    filepath = os.path.join(output_dir, model + '_' + conf + '.png')
+    filepath = os.path.join(output_dir, model + '_' + conf + f'{"" if len(ranges_config) == 1 else "_comparison"}.png')
 
 plt.savefig(filepath, bbox_inches='tight')
 print(f'Saved single fitted figure to: {filepath}')

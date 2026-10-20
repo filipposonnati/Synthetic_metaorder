@@ -6,6 +6,7 @@ Simulatore di mercato sintetico, giorno per giorno.
 PIPELINE
 --------
   1. SEGNI   - Long Memory Flow (lmf.simulate_lmf / simulate_lmf_lambda)
+               + id del metaordine LMF di ogni trade (salvato come 5a colonna)
   2. VOLUMI  - senza segno, campionati con volumes_generation:
                  'empirical' : bootstrap dai volumi reali del giorno
                  'mem_acd'   : modello MEM/ACD gia' calibrato (models/mem_<dist>_<p>_<q>)
@@ -20,6 +21,15 @@ I timestamp dell'output sono quelli reali del giorno; segni, volumi e prezzi son
 La lunghezza di ogni giorno e' quella del giorno reale. Per dare ai kernel di impatto
 (p volumi precedenti) una storia coerente, si generano n_trades + p trade e i primi p
 fanno da initial_v (poi scartati dall'output).
+
+FORMATO OUTPUT (CSV senza header)
+---------------------------------
+  tempo [s], prezzo, volume, segno [, id metaordine LMF]
+
+L'id del metaordine e' presente solo se save_meta_ids=True (default). Gli id sono
+progressivi e validi all'interno di ciascun giorno (ripartono da 0 ogni giorno);
+i trade di rumore (p_trade_random) hanno id = -1. Poiche' i primi p trade vengono
+scartati, il primo metaordine del giorno puo' risultare troncato.
 """
 
 import sys
@@ -41,7 +51,7 @@ DEFAULT_DATA_DIR = Path("..") / "database" / "data"
 
 
 # ---------------------------------------------------------------------------
-# I/O (CSV senza header: tempo [s], prezzo, volume, segno; stesso formato di methods.py)
+# I/O (CSV senza header: tempo [s], prezzo, volume, segno [, id metaordine])
 # ---------------------------------------------------------------------------
 
 def open_real_data(filename, data_dir=DEFAULT_DATA_DIR):
@@ -51,15 +61,18 @@ def open_real_data(filename, data_dir=DEFAULT_DATA_DIR):
             np.abs(df[2].to_numpy(dtype=float)), df[3].to_numpy(dtype=float))
 
 
-def save_simulated_data(path, timestamps, prices, volumes, signs):
-    """Salva un giorno sintetico nello stesso formato dei dati reali."""
+def save_simulated_data(path, timestamps, prices, volumes, signs, meta_ids=None):
+    """Salva un giorno sintetico nello stesso formato dei dati reali.
+    Se meta_ids non e' None viene aggiunta una quinta colonna con l'id del metaordine LMF."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({0: np.asarray(timestamps, dtype=float),
-                  1: np.asarray(prices, dtype=float),
-                  2: np.asarray(volumes, dtype=float),
-                  3: np.asarray(signs).astype(int)}
-                 ).to_csv(path, header=False, index=False)
+    cols = {0: np.asarray(timestamps, dtype=float),
+            1: np.asarray(prices, dtype=float),
+            2: np.asarray(volumes, dtype=float),
+            3: np.asarray(signs).astype(int)}
+    if meta_ids is not None:
+        cols[4] = np.asarray(meta_ids).astype(np.int64)
+    pd.DataFrame(cols).to_csv(path, header=False, index=False)
 
 
 DEFAULT_OUT_DIR = Path("..") / "database" / "data_synthetic"
@@ -103,17 +116,20 @@ def load_price_model(price_model, models_dir, delta, p_price):
 
 
 # ---------------------------------------------------------------------------
-# LAYER 1 - SEGNI
+# LAYER 1 - SEGNI (+ id dei metaordini LMF)
 # ---------------------------------------------------------------------------
 
 def generate_signs(n_steps, alpha, n_traders=None, lambda_lmf=None):
+    """Ritorna (signs, meta_ids): segni (+1/-1) e id del metaordine LMF di ogni trade
+    (-1 per i trade di rumore)."""
     if n_traders is not None:
-        signs = simulate_lmf(alpha, n_traders, n_steps)
+        signs, meta_ids = simulate_lmf(alpha, n_traders, n_steps, return_meta_ids=True)
     elif lambda_lmf is not None:
-        signs, _, _ = simulate_lmf_lambda(alpha, lambda_lmf, n_steps)
+        signs, _, _, meta_ids = simulate_lmf_lambda(alpha, lambda_lmf, n_steps,
+                                                    return_meta_ids=True)
     else:
         raise ValueError("Fornire n_traders o lambda_lmf per LMF.")
-    return np.asarray(signs, dtype=float)
+    return np.asarray(signs, dtype=float), np.asarray(meta_ids, dtype=np.int64)
 
 
 # ---------------------------------------------------------------------------
@@ -173,19 +189,20 @@ def simulate_day(prices_real, volumes_real, rng, *,
                  alpha, n_traders, lambda_lmf,
                  volume_model, volume_params,
                  price_model, price_params, bootstrap):
+    """Ritorna (prices, volumes, signs, meta_ids), tutti di lunghezza n_trades."""
     n_trades = len(prices_real)
     P0 = float(prices_real[0])
     p = int(price_params["p"])
     n_tot = n_trades + p
 
-    signs_all = generate_signs(n_tot, alpha, n_traders, lambda_lmf)
+    signs_all, ids_all = generate_signs(n_tot, alpha, n_traders, lambda_lmf)
     vols_all = generate_volumes(n_tot, volumes_real, volume_model, volume_params, rng)
     signed_all = signs_all * vols_all
 
     initial_v, sim_v = signed_all[:p], signed_all[p:]
     prices = generate_prices(price_model, price_params, sim_v, initial_v, P0, rng,
                              bootstrap=bootstrap)
-    return prices, vols_all[p:], signs_all[p:]
+    return prices, vols_all[p:], signs_all[p:], ids_all[p:]
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +216,7 @@ def run(data_dir=DEFAULT_DATA_DIR,
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
+        save_meta_ids=True,           # True: aggiunge la colonna con l'id del metaordine LMF
         # volumi
         volume_model="empirical",     # 'empirical' | 'mem_acd' | 'log_ar'
         mem_dist="burr12",
@@ -227,14 +245,15 @@ def run(data_dir=DEFAULT_DATA_DIR,
         raise FileNotFoundError(f"nessun file '{pattern}' in {data_dir}")
 
     print(f"Simulazione giorno per giorno | segni=LMF | volumi={volume_model} | "
-          f"prezzi={price_model} (p={price_params['p']}, delta={price_params['delta']})")
+          f"prezzi={price_model} (p={price_params['p']}, delta={price_params['delta']}) | "
+          f"meta_ids={'si' if save_meta_ids else 'no'}")
 
     n_done = 0
     for f in files:
         timestamps, prices_real, volumes_real, signs_real = open_real_data(f.name, data_dir)
 
         try:
-            prices, volumes, signs = simulate_day(
+            prices, volumes, signs, meta_ids = simulate_day(
                 prices_real, volumes_real, rng,
                 alpha=alpha, n_traders=n_traders, lambda_lmf=lambda_lmf,
                 volume_model=volume_model, volume_params=volume_params,
@@ -244,7 +263,8 @@ def run(data_dir=DEFAULT_DATA_DIR,
             print(f"  !! Giorno {f.name} saltato: {e}")
             continue
 
-        save_simulated_data(out_dir / f.name, timestamps, prices, volumes, signs)
+        save_simulated_data(out_dir / f.name, timestamps, prices, volumes, signs,
+                            meta_ids=meta_ids if save_meta_ids else None)
         n_done += 1
         print(f"  -> Giorno {f.name} completato.")
 
@@ -254,13 +274,14 @@ def run(data_dir=DEFAULT_DATA_DIR,
 if __name__ == "__main__":
     run(
         data_dir=DEFAULT_DATA_DIR,
-        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_empirical_tim_param_0.3_1000",
+        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_empirical_tim_0.0_1000",
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
+        save_meta_ids=True,
         volume_model="empirical",   # 'empirical' | 'mem_acd' | 'log_ar'
-        price_model="tim_parametric",          # 'tim' | 'tim_parametric'
-        delta=0.3,
+        price_model="tim",          # 'tim' | 'tim_parametric'
+        delta=0.0,
         p_price=1000,
         bootstrap=True,
         seed=42,
