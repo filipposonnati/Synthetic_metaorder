@@ -30,8 +30,8 @@ os.makedirs(output_dir, exist_ok=True)
 
 show_q_dist = False  # Flag to display Q distribution on the right axis
 
-model = 'lmf_1.5_0.3_empirical_tim_param_0.3_1000'
-#model = 'var_reduced_1000'
+#model = 'lmf_1.5_0.3_empirical_tim_param_0.3_1000'
+model = 'var_structural_1000'
 #model = 'tim_param_0.3_1000'
 #model = ''
 
