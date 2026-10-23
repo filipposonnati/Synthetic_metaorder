@@ -9,8 +9,9 @@ import methods
 import gc
 
 #model = 'lmf_1.5_0.3_empirical_tim_param_0.3_1000'
-model = 'var_structural_1000'
+#model = 'var_structural_1000'
 #model = 'tim_param_0.3_1000'
+model = ''
 iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
 
@@ -35,8 +36,8 @@ paths = np.array(listdir(data_dir))
 #kind = configuration['kind']
 #exponent = configuration['exponent']
 
-nb_traders = 20
-kind = 'power'
+nb_traders = 4
+kind = 'uniform'
 exponent = 2.0
 
 if nb_traders == 1:

@@ -125,7 +125,6 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
 
     # Volume traded by everyone until a certain point
     sorted_trades['TradedVolume'] = sorted_trades['TransactionTime'] - start_cum_volume + start_volume
-    sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] / sorted_trades.groupby('metaid')['TradedVolume'].transform('last')
 
     # Partial impact
     start_prices = sorted_trades.groupby('metaid')['BeginMid'].transform('first')
@@ -150,6 +149,9 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
         'TransactionTime': 'first',
         'EndTransactionTime': 'last'
     }).reset_index()
+
+    sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] / sorted_trades.groupby('metaid')['TradedVolume'].transform('last')
+
 
     nb_child = sorted_trades.groupby('metaid').size().reset_index(name='NbChild')
     metaorders_agg = metaorders_agg.merge(nb_child, on='metaid')

@@ -2,13 +2,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from scipy.optimize import curve_fit
+from scipy.odr import ODR, Model, RealData
 from os import listdir
 import re
 
 DIR = 'database\\meta'
-PATH = 'meta_20_power_2.0.csv'
-SAMPLE_THRESHOLD_PCT = 0.1
+PATH = 'meta_20_uniform.csv'
+SAMPLE_THRESHOLD_PCT = 0.01   # as in impact_volume_curve.py: keep bins with count > 0.5 * max
 
 X_LABEL = 'V/V_D'
 Y_LABEL = 'V/V_P'
@@ -22,16 +22,18 @@ def log_function_3_ab(log_x, log_Y, delta, alpha):
     return log_Y + delta * log_a + alpha * log_b
 
 
-def safe_err(std_col, count_col, mean_col, fallback_rel=1.0):
+def linear_func_odr(p, x):
+    """ODR model: log10(I) = p0*log_a + p1*log_b + p2   (x has shape (2, n))."""
+    return p[0] * x[0] + p[1] * x[1] + p[2]
+
+
+def safe_err(std_col, count_col, mean_col=None, fallback=1e-8):
     """
-    Standard error = std / sqrt(n).
-    Assigns a fallback relative error for bins with zero or one sample
-    to prevent division by zero during fitting.
+    Standard error of the mean = std / sqrt(n); tiny fallback for bins with
+    a single sample (same convention as impact_volume_curve.py).
     """
-    err = std_col / np.sqrt(count_col)
-    bad = (err == 0) | np.isnan(err)
-    err[bad] = fallback_rel * mean_col[bad]
-    return err
+    err = np.where(count_col > 1, std_col / np.sqrt(count_col), fallback)
+    return pd.Series(err, index=std_col.index)
 
 def compute_binned_stats(df, n_bins=31, sample_threshold_pct=SAMPLE_THRESHOLD_PCT):
     """
@@ -89,16 +91,17 @@ def compute_binned_stats(df, n_bins=31, sample_threshold_pct=SAMPLE_THRESHOLD_PC
     ].copy()
 
     # Significance mask
-    mask_significance = grouped['sample_count'] >= (grouped['sample_count'].max() * sample_threshold_pct)
+    mask_significance = grouped['sample_count'] > (grouped['sample_count'].max() * sample_threshold_pct)
 
     # Log10 transforms and log-space error propagation (derivative method)
     log_a = np.log10(grouped['a_mean'])
     log_b = np.log10(grouped['b_mean'])
     log_i = np.log10(grouped['impact_mean'])
 
-    zerr = grouped['err'].values   / (grouped['impact_mean'].values * np.log(10))
-    xerr = grouped['a_err'].values / (grouped['a_mean'].values      * np.log(10))
-    yerr = grouped['b_err'].values / (grouped['b_mean'].values      * np.log(10))
+    # floor of 1e-6 on log-space errors, as in impact_volume_curve.py
+    zerr = np.maximum(grouped['err'].values   / (grouped['impact_mean'].values * np.log(10)), 1e-12)
+    xerr = np.maximum(grouped['a_err'].values / (grouped['a_mean'].values      * np.log(10)), 1e-12)
+    yerr = np.maximum(grouped['b_err'].values / (grouped['b_mean'].values      * np.log(10)), 1e-12)
 
     log_vals = dict(log_a=log_a, log_b=log_b, log_i=log_i,
                     zerr=zerr, xerr=xerr, yerr=yerr)
@@ -106,26 +109,36 @@ def compute_binned_stats(df, n_bins=31, sample_threshold_pct=SAMPLE_THRESHOLD_PC
     return grouped, log_vals, mask_significance
 
 
-def iterative_weighted_regression(log_a, log_b, log_i, zerr, xerr, yerr, n_iter=10):
+def odr_regression(log_a, log_b, log_i, zerr, xerr, yerr):
     """
-    Fit log_function_3_ab using the Effective Variance Method, iterating
-    the sigma estimate until the exponent estimates converge.
+    Orthogonal Distance Regression in log-log space (same procedure as
+    impact_volume_curve.py, extended to two regressors):
+
+        log10(I) = delta*log10(a) + alpha*log10(b) + log10(Y)
+
+    Errors on both the regressors (xerr, yerr) and on the response (zerr)
+    are taken into account directly by ODR.
 
     Returns
     -------
-    log_Y_fit, d_fit, al_fit : float
-        Fitted parameters (Y in log10 space, delta, alpha).
+    popt : [delta, alpha, log_Y]
+    perr : standard deviations of the parameters (same order)
+    r2   : coefficient of determination computed in log-log space
     """
-    popt = [np.log10(np.median(10 ** log_i)), 0.5, 0.5]
-    for _ in range(n_iter):
-        _, d, al = popt
-        sig_eff = np.sqrt(zerr**2 + (d**2 * xerr**2) + (al**2 * yerr**2))
-        popt, pcov = curve_fit(
-            log_function_3_ab,
-            (log_a, log_b), log_i,
-            p0=popt, sigma=sig_eff, absolute_sigma=True,
-        )
-    return popt, pcov  # [log_Y_fit, d_fit, al_fit]
+    log_a, log_b, log_i = (np.asarray(v, dtype=float) for v in (log_a, log_b, log_i))
+    x = np.vstack([log_a, log_b])
+    sx = np.vstack([np.asarray(xerr, dtype=float), np.asarray(yerr, dtype=float)])
+
+    data = RealData(x, log_i, sx=sx, sy=np.asarray(zerr, dtype=float))
+    out = ODR(data, Model(linear_func_odr), beta0=[1.0, 1.0, 0.0]).run()
+
+    popt, perr = out.beta, out.sd_beta
+
+    y_pred = linear_func_odr(popt, x)
+    ss_res = np.sum((log_i - y_pred) ** 2)
+    ss_tot = np.sum((log_i - log_i.mean()) ** 2)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return popt, perr, r2
 
 # =============================================================================
 # PLOT FUNCTIONS
@@ -160,52 +173,7 @@ def plot_scatter_3d(log_a, log_b, log_i, x_label=X_LABEL, y_label=Y_LABEL,
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
-
-
-def plot_histogram_3d(df, x_label=X_LABEL, y_label=Y_LABEL, n_hist=25,
-                      save_path='images\\part_rate\\part_rate_hist.png'):
-    """
-    3-D bar chart showing the sample density across the (log_a, log_b) plane.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Raw data with columns 'a' and 'b'.
-    n_hist : int
-        Number of histogram bins along each axis.
-    """
-    log_a_all = np.log10(df['a'].to_numpy())
-    log_b_all = np.log10(df['b'].to_numpy())
-
-    counts, x_edges, y_edges = np.histogram2d(log_a_all, log_b_all, bins=n_hist)
-
-    x_pos, y_pos = np.meshgrid(x_edges[:-1], y_edges[:-1], indexing='xy')
-    x_pos, y_pos = x_pos.ravel(), y_pos.ravel()
-    dz = counts.T.ravel()
-
-    dx = (x_edges[1] - x_edges[0]) * 0.85
-    dy = (y_edges[1] - y_edges[0]) * 0.85
-
-    norm   = plt.Normalize(dz[dz > 0].min(), dz.max())
-    colors = plt.cm.turbo(norm(dz))
-
-    fig = plt.figure(figsize=(14, 10))
-    ax  = fig.add_subplot(111, projection='3d')
-    ax.bar3d(x_pos, y_pos, 0, dx, dy, dz, color=colors, alpha=0.85, shade=True)
-
-    mappable = cm.ScalarMappable(norm=norm, cmap=plt.cm.turbo)
-    mappable.set_array(dz)
-    fig.colorbar(mappable, ax=ax, shrink=0.5, aspect=10, pad=0.1, label='Sample Density')
-
-    ax.set_xlabel(rf'$\log_{{10}}({x_label})$')
-    ax.set_ylabel(rf'$\log_{{10}}({y_label})$')
-    ax.set_zlabel('Frequency')
-    ax.view_init(elev=30, azim=-150)
-
-    plt.savefig(save_path, bbox_inches='tight')
-    plt.close()
-
+    plt.show()
 
 def plot_histogram_2d(df, x_label=X_LABEL, y_label=Y_LABEL, n_hist=25,
                       save_path='images\\part_rate\\part_rate_hist_2d.png'):
@@ -247,7 +215,6 @@ def plot_histogram_2d(df, x_label=X_LABEL, y_label=Y_LABEL, n_hist=25,
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
-
 def plot_fit_surface(log_a_f, log_b_f, log_i_f, log_Y_fit, d_fit, al_fit,
                      x_label=X_LABEL, y_label=Y_LABEL,
                      save_path='images\\part_rate\\part_rate_fit.png'):
@@ -259,7 +226,7 @@ def plot_fit_surface(log_a_f, log_b_f, log_i_f, log_Y_fit, d_fit, al_fit,
     log_a_f, log_b_f, log_i_f : ndarray
         Log10 data used for fitting (significance-filtered).
     log_Y_fit, d_fit, al_fit : float
-        Parameters returned by iterative_weighted_regression.
+        Parameters returned by odr_regression.
     """
     a_range = np.linspace(log_a_f.min(), log_a_f.max(), 10)
     b_range = np.linspace(log_b_f.min(), log_b_f.max(), 10)
@@ -285,7 +252,7 @@ def plot_fit_surface(log_a_f, log_b_f, log_i_f, log_Y_fit, d_fit, al_fit,
     ax.view_init(elev=15, azim=120)
 
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
+    plt.show()
 
 def power_law(x, a, delta):
     return a * x**delta
@@ -383,8 +350,23 @@ def plot_bucci(model = ''):
         x = grouped['PR_mean'].to_numpy()
         y = grouped['Ratio_mean'].to_numpy()
 
+        x_err = grouped['PR_std'].to_numpy() / np.sqrt(grouped['sample_count'].to_numpy())
+        y_err = grouped['Ratio_std'].to_numpy() / np.sqrt(grouped['sample_count'].to_numpy())
+
+        """
+        mask = y_err < 1e-1
+        x = x[mask]
+        y = y[mask]
+        x_err = x_err[mask]
+        y_err = y_err[mask]
+        """
+
         # Top subplot: binned mean points
-        ax_main.plot(x, y, linestyle="", marker=".", color=color, label=label)
+        #ax_main.plot(x, y, linestyle="", marker=".", color=color, label=label)
+        ax_main.errorbar(x, y, y_err, x_err, linestyle="", marker=".", color=color, label=label)
+
+        ax_main.set_xlim(1e-3, 1.2)
+        ax_hist.set_xlim(1e-3, 1.2)
 
     # --- Top subplot (points) formatting ---
     ax_main.set_xscale("log")
@@ -392,7 +374,7 @@ def plot_bucci(model = ''):
     ax_main.set_ylabel(r'$I(Q) / \sqrt{Q}$')
     ax_main.grid(True, which="both", ls="-")
     # Single legend placed to the right of the top subplot
-    ax_main.legend(loc='upper left', bbox_to_anchor=(1.01, 1), borderaxespad=0)
+    ax_main.legend(loc='upper right', bbox_to_anchor=(0.99, 0.99), borderaxespad=0)
     # Hide x-tick labels on top plot (shared axis, labels shown on bottom)
     plt.setp(ax_main.get_xticklabels(), visible=False)
 
@@ -412,12 +394,15 @@ def plot_bucci(model = ''):
     plt.close()
 
 if __name__ == '__main__':
+    #plot_bucci()
+
     # --- Load and prepare raw data ---
     synthetic_meta = pd.read_csv(
         f'{DIR}\\{PATH}', sep=',', parse_dates=['BeginTime', 'EndTime']
     )
     df_res = synthetic_meta[['MetaVolume', 'TradedVolume', 'MetaImpact', 'NbChild']].copy()
     df_res = df_res[df_res['NbChild'] > 1]
+
     df_res['a'] = df_res['MetaVolume']   # participation rate axis
     df_res['b'] = df_res['MetaVolume'] / df_res['TradedVolume'] # relative volume axis
 
@@ -432,27 +417,26 @@ if __name__ == '__main__':
     yerr  = log_vals['yerr']
 
     # --- Plots over all bins ---
-    plot_scatter_3d(log_a, log_b, log_i)
-    plot_histogram_3d(df_res)
+    #plot_scatter_3d(log_a, log_b, log_i)
     plot_histogram_2d(df_res)
 
     # --- Regression on significance-filtered bins ---
     log_a_f = log_a[mask_significance].values
     log_b_f = log_b[mask_significance].values
     log_i_f = log_i[mask_significance].values
-    zerr_f  = zerr[mask_significance]
-    xerr_f  = xerr[mask_significance]
-    yerr_f  = yerr[mask_significance]
+    mask_np = mask_significance.values
+    zerr_f  = zerr[mask_np]
+    xerr_f  = xerr[mask_np]
+    yerr_f  = yerr[mask_np]
 
-    popt, pcov = iterative_weighted_regression(
+    # ODR in log-log space (same procedure as impact_volume_curve.py)
+    popt, perr, r2 = odr_regression(
         log_a_f, log_b_f, log_i_f, zerr_f, xerr_f, yerr_f
     )
 
-    log_Y_fit, d_fit, al_fit = popt
-    log_Y_err, d_err, al_err = np.sqrt(np.diag(pcov))
+    d_fit, al_fit, log_Y_fit = popt
+    d_err, al_err, log_Y_err = perr
 
-    print(f"Fit Results:\nY={10**log_Y_fit:.4g} +- {np.log(10) * 10**log_Y_fit * log_Y_err:.4f}\ndelta={d_fit:.4f} +- {d_err:.4f}\nalpha={al_fit:.4f} +- {al_err:.4f}")
+    print(f"Fit Results (ODR):\nY={10**log_Y_fit:.4g} +- {np.log(10) * 10**log_Y_fit * log_Y_err:.4f}\ndelta={d_fit:.4f} +- {d_err:.4f}\nalpha={al_fit:.4f} +- {al_err:.4f}\nR2={r2:.4f}")
 
     plot_fit_surface(log_a_f, log_b_f, log_i_f, log_Y_fit, d_fit, al_fit)
-
-    plot_bucci()
