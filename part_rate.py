@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy.odr import ODR, Model, RealData
+import os
 from os import listdir
 import re
 
@@ -102,8 +103,7 @@ def odr_regression(a, b, impact, zerr, xerr, yerr, model_kind='linear'):
 # PLOT FUNCTIONS
 # =============================================================================
 
-def plot_histogram_2d(df, n_hist=25,
-                      save_path='images\\part_rate\\part_rate_hist_2d.png'):
+def plot_histogram_2d(df, n_hist=25, save_path='images\\part_rate\\part_rate_hist_2d.png'):
     valid = df[['a', 'b']].replace([np.inf, -np.inf], np.nan).dropna()
     valid = valid[(valid['a'] > 0) & (valid['b'] > 0)]
     x_edges = np.logspace(np.log10(valid['a'].min()), np.log10(valid['a'].max()), n_hist + 1)
@@ -398,9 +398,234 @@ def plot_bucci(model = ''):
     plt.savefig(f'images\\part_rate\\{image_name}.png', bbox_inches='tight', dpi=300)
     plt.close()
 
+def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1, 
+                                  save_path='images/part_rate/impact_volume_deciles.png',
+                                  dist_save_path=None):
+    """
+    Replica esattamente la logica di impact_volume_curve.py per il caricamento e i filtri,
+    aggiungendo la suddivisione in decili del Participation Rate e la curva All Data.
+    Inoltre, genera la figura dedicata alla distribuzione del Participation Rate divisa in decili.
+    """
+    # 1. Caricamento del file esattamente come in impact_volume_curve.py
+    if os.path.exists(os.path.join(dir_path, path + '_' + str(min_nb_child) + '.csv')):
+        data_path = os.path.join(dir_path, path + '_' + str(min_nb_child) + '.csv')
+    else:
+        data_path = os.path.join(dir_path, path + '.csv')
+        
+    synthetic_meta = pd.read_csv(
+        data_path,
+        sep=',',
+        parse_dates=['BeginTime', 'EndTime']
+    )
+
+    # 2. Filtri identici a impact_volume_curve.py
+    synthetic_meta = synthetic_meta[synthetic_meta['MetaVolume'] > 0]
+    df_res = synthetic_meta[['MetaVolume', 'DailyVolume', 'TradedVolume', 'NbChild', 'MetaImpact']].copy()
+    
+    # Applicazione del filtro su NbChild (uguale a cfg['min_val'] con op '>')
+    df_res = df_res[df_res['NbChild'] > min_nb_child]
+
+    if df_res.empty:
+        print("Nessun dato valido disponibile.")
+        return
+
+    # Calcolo del Participation Rate
+    df_res['ParticipationRate'] = df_res['MetaVolume'] / df_res['TradedVolume']
+
+    # 3. Creazione dei decili (gestendo eventuali inf/nan solo per il qcut dei decili)
+    df_valid_pr = df_res.replace([np.inf, -np.inf], np.nan).dropna(subset=['ParticipationRate'])
+    df_valid_pr = df_valid_pr[df_valid_pr['ParticipationRate'] > 0]
+
+    try:
+        df_valid_pr['decile'] = pd.qcut(df_valid_pr['ParticipationRate'], q=n_deciles, labels=False, duplicates='drop')
+    except Exception as e:
+        print(f"Errore nella creazione dei decili: {e}")
+        return
+
+    actual_deciles = sorted(df_valid_pr['decile'].unique())
+    cmap = plt.get_cmap('tab10', len(actual_deciles))
+
+    # --- Generazione della figura della distribuzione del Participation Rate in decili ---
+    if dist_save_path is None:
+        dist_save_path = save_path.replace('impact_volume_deciles', 'part_rate_deciles_dist')
+
+    pr_array = df_valid_pr['ParticipationRate'].to_numpy()
+    percentiles = np.linspace(0, 100, n_deciles + 1)
+    decile_edges = np.percentile(pr_array, percentiles)
+
+    fig_dist, ax_dist = plt.subplots(figsize=(10, 6))
+    hist_bins_dist = np.logspace(np.log10(pr_array.min()), np.log10(pr_array.max()), 60)
+    ax_dist.hist(pr_array, bins=hist_bins_dist, color='lightgray', edgecolor='black', linewidth=0.5, label='Distribution')
+
+    for i in range(len(actual_deciles)):
+        d_val = actual_deciles[i]
+        left_edge = decile_edges[i]
+        right_edge = decile_edges[i+1]
+        color = cmap(i)
+        ax_dist.axvspan(left_edge, right_edge, color=color, alpha=0.2, label=f'D{d_val+1}')
+        ax_dist.axvline(left_edge, color=color, linestyle='--', linewidth=1)
+    ax_dist.axvline(decile_edges[len(actual_deciles)], color=cmap(len(actual_deciles)-1), linestyle='--', linewidth=1)
+
+    ax_dist.set_xscale('log')
+    ax_dist.set_xlabel(r'$\phi = V / V_P$')
+    ax_dist.set_ylabel('Count')
+    #ax_dist.set_title('Distribution Splitting')
+    ax_dist.grid(True, which='both', ls='--', alpha=0.3)
+    ax_dist.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, fontsize=9)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(dist_save_path), exist_ok=True)
+    fig_dist.savefig(dist_save_path, dpi=300, bbox_inches='tight')
+    print(f"Grafico della distribuzione dei decili salvato in: {dist_save_path}")
+    plt.close(fig_dist)
+    # --------------------------------------------------------------------------------------------
+
+    fig, ax1 = plt.subplots(figsize=(11, 7))
+
+    all_x_min = []
+    all_x_max = []
+
+    # Funzione interna di binning e fit ODR (identica a impact_volume_curve.py)
+    def process_and_fit(sub_df):
+        min_vol = sub_df['MetaVolume'].min()
+        max_vol = sub_df['MetaVolume'].max()
+        bins = np.logspace(np.log10(min_vol), np.log10(max_vol), 51)
+
+        sub_df_binned = sub_df.copy()
+        sub_df_binned['bin'] = pd.cut(sub_df_binned['MetaVolume'], bins=bins, include_lowest=True)
+
+        grouped = sub_df_binned.groupby('bin', observed=True).agg({
+            'MetaVolume': ['mean', 'std', 'count'],
+            'MetaImpact': ['mean', 'std']
+        }).dropna()
+
+        grouped.columns = ['Q_mean', 'Q_std', 'sample_count', 'I_mean', 'I_std']
+        grouped = grouped[(grouped['Q_mean'] > 0) & (grouped['I_mean'] > 0)]
+
+        if grouped.empty:
+            return None, None
+
+        x_data = grouped['Q_mean'].values
+        y_data = grouped['I_mean'].values
+
+        # Soglia a 0.5 * max_samples (come in impact_volume_curve.py)
+        max_samples = grouped['sample_count'].max()
+        grouped_fit = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
+
+        fit_res = None
+        if len(grouped_fit) > 2:
+            x_fit_data = grouped_fit['Q_mean'].values
+            y_fit_data = grouped_fit['I_mean'].values
+            counts = grouped_fit['sample_count'].values
+
+            x_sem = np.where(counts > 1, grouped_fit['Q_std'].values / np.sqrt(counts), 1e-8)
+            y_sem = np.where(counts > 1, grouped_fit['I_std'].values / np.sqrt(counts), 1e-8)
+
+            log_x = np.log10(x_fit_data)
+            log_y = np.log10(y_fit_data)
+
+            sigma_log_x = np.maximum(x_sem / (x_fit_data * np.log(10)), 1e-6)
+            sigma_log_y = np.maximum(y_sem / (y_fit_data * np.log(10)), 1e-6)
+
+            def linear_func(p, x):
+                return p[0] * x + p[1]
+
+            model_odr = Model(linear_func)
+            data_odr = RealData(log_x, log_y, sx=sigma_log_x, sy=sigma_log_y)
+            
+            # beta0 = [1.0, 0.0] come in impact_volume_curve.py
+            odr = ODR(data_odr, model_odr, beta0=[1.0, 0.0])
+            out = odr.run()
+
+            slope, intercept = out.beta
+            slope_err, _ = out.sd_beta
+
+            x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
+            y_fit = (10**intercept) * (x_fit**slope)
+            fit_res = (x_fit, y_fit, slope, slope_err)
+
+        return (x_data, y_data), fit_res
+
+    # 1. PLOT DEI SINGOLI DECILI
+    for i, d in enumerate(actual_deciles):
+        sub_df = df_valid_pr[df_valid_pr['decile'] == d]
+        if sub_df.empty:
+            continue
+
+        eta_min = sub_df['ParticipationRate'].min()
+        eta_max = sub_df['ParticipationRate'].max()
+        color = cmap(i)
+        label_str = f'D{d+1}'
+
+        data_pts, fit_res = process_and_fit(sub_df)
+        if data_pts is None:
+            continue
+
+        x_data, y_data = data_pts
+        all_x_min.append(np.min(x_data))
+        all_x_max.append(np.max(x_data))
+
+        ax1.plot(x_data, y_data, linestyle='', marker='o', markersize=3.5, color=color, alpha=1.0)
+
+        if fit_res is not None:
+            x_fit, y_fit, slope, slope_err = fit_res
+            ax1.plot(
+                x_fit, y_fit, linestyle='--', linewidth=1.2, color=color,
+                label=f"{label_str} ${slope:.3f} \\pm {slope_err:.3f}$"
+            )
+
+    # 2. PLOT DATI COMPLETI ("All Data" usando l'intero df_res filtrato come in impact_volume_curve.py)
+    data_pts_all, fit_res_all = process_and_fit(df_res)
+    if data_pts_all is not None:
+        x_data_all, y_data_all = data_pts_all
+        all_x_min.append(np.min(x_data_all))
+        all_x_max.append(np.max(x_data_all))
+        
+        ax1.plot(x_data_all, y_data_all, linestyle='', marker='o', markersize=5, color='black', alpha=1.0)
+
+        if fit_res_all is not None:
+            x_fit_all, y_fit_all, slope_all, slope_err_all = fit_res_all
+            ax1.plot(
+                x_fit_all, y_fit_all, linestyle='-', linewidth=2.5, color='black',
+                label=f"All Data ${slope_all:.3f} \\pm {slope_err_all:.3f}$"
+            )
+
+    # 3. CURVA DI RIFERIMENTO TEORICA (sqrt(Q))
+    if all_x_min and all_x_max:
+        global_x_min = min(all_x_min)
+        global_x_max = max(all_x_max)
+        x_ref = np.logspace(np.log10(global_x_min), np.log10(global_x_max), 100)
+        y_ref = x_ref**0.5
+        ax1.plot(x_ref, y_ref, linestyle='-', color='black', linewidth=1.2, label=r'$\sqrt{Q}$')
+
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.set_xlabel(r'$Q$')
+    ax1.set_ylabel(r'$I$', color='black')
+    ax1.grid(True, which="both", ls="-", alpha=0.2)
+    ax1.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, fontsize=9)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Grafico salvato in: {save_path}")
+    plt.close()
+
 if __name__ == '__main__':
-    conf = '4_uniform'
+    nb_traders = 20
+    kind = 'power'
+    exp = '2.0'
+    #algorithm = 'maitrier'
+
+    if kind == 'uniform':
+        conf = f'{nb_traders}_{kind}'
+    else:
+        conf = f'{nb_traders}_{kind}_{exp}'
+
+    path = 'meta_' + conf
     PATH = f'meta_{conf}.csv'
+
+    dir_path = os.path.join('database', 'meta') # o 'database\meta'
 
     #plot_bucci()
     # Set 'linear' per fittare il piano in log-space: log10(I) = log10(Y) + delta*log10(a) + alpha*log10(b)
@@ -422,9 +647,8 @@ if __name__ == '__main__':
     yerr_f = selected['b_err'].to_numpy()
     zerr_f = selected['err'].to_numpy()
 
-    plot_histogram_2d(df_res, save_path=f'images\\part_rate\\part_rate_his_{conf}')
-    popt, perr, r2 = odr_regression(a_f, b_f, i_f, zerr_f, xerr_f, yerr_f,
-                                    model_kind=MODEL_KIND)
+    plot_histogram_2d(df_res, save_path=f'images\\part_rate\\part_rate_his_{conf}.png')
+    popt, perr, r2 = odr_regression(a_f, b_f, i_f, zerr_f, xerr_f, yerr_f, model_kind=MODEL_KIND)
     
     if MODEL_KIND == 'linear':
         logY_val, delta_val, alpha_val = popt
@@ -447,3 +671,12 @@ if __name__ == '__main__':
 
     # Figura 2: Istogramma 3D dei conteggi con colore basato sull'intensità
     plot_count_bars(grouped, mask_significance, save_path=f'images\\part_rate\\part_rate_counts_{conf}.png')
+
+    plot_impact_volume_by_deciles(
+        dir_path=dir_path,
+        path=path,
+        n_deciles=10,
+        min_nb_child=1,
+        save_path=f'images/part_rate/impact_volume_deciles_{conf}.png',
+        dist_save_path=f'images/part_rate/part_rate_deciles_dist_{conf}.png'
+    )

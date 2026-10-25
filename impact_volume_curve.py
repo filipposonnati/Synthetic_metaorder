@@ -31,9 +31,9 @@ os.makedirs(output_dir, exist_ok=True)
 show_q_dist = False  # Flag to display Q distribution on the right axis
 
 #model = 'lmf_1.5_0.3_empirical_tim_param_0.3_1000'
-model = 'var_structural_1000'
+#model = 'var_structural_1000'
 #model = 'tim_param_0.3_1000'
-#model = ''
+model = ''
 
 algorithm = 'maitrier' # 'maitrier' or lmf
 
@@ -42,8 +42,8 @@ if model != "":
     dir = dir + "_" + model
 
 dir_path = os.path.join('database', dir)
-nb_traders = 20
-kind = 'power'
+nb_traders = 4
+kind = 'uniform'
 exponent = 2.0
 
 if algorithm == 'maitrier':
