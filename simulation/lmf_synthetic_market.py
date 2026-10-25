@@ -93,7 +93,7 @@ def _load(path, loader, what):
 
 def load_volume_model(volume_model, models_dir, p_ar, mem_p, mem_q, mem_dist):
     """Ritorna i parametri del modello di volumi salvato (None per 'empirical')."""
-    if volume_model == "empirical":
+    if volume_model in ("empirical", "normal_abs"):
         return None
     if volume_model == "log_ar":
         name = f"logar_{p_ar}"
@@ -136,13 +136,18 @@ def generate_signs(n_steps, alpha, n_traders=None, lambda_lmf=None):
 # LAYER 2 - VOLUMI (senza segno)
 # ---------------------------------------------------------------------------
 
-def generate_volumes(n_steps, volumes_real, volume_model, volume_params, rng):
+def generate_volumes(n_steps, volumes_real, volume_model, volume_params, rng, signed_real):
     if volume_model == "empirical":
         return vg.sample_empirical_volumes(np.abs(volumes_real), n_steps, rng)
     if volume_model == "log_ar":
         return vg.simulate_ar_log_volume(volume_params, n_steps, rng)
     if volume_model == "mem_acd":
         return vg.simulate_mem_acd(volume_params, n_steps, rng)
+    if volume_model == "normal_abs":
+        if signed_real is None:
+            raise ValueError("normal_abs richiede i volumi reali con segno del giorno")
+        params = vg.fit_normal_signed_volume(signed_real)      # fit sul giorno
+        return vg.simulate_normal_abs_volume(params, n_steps, rng)
     raise ValueError(f"volume_model sconosciuto: {volume_model!r}")
 
 
@@ -185,7 +190,7 @@ def generate_prices(price_model, price_params, sim_v, initial_v, P0, rng, bootst
 # PIPELINE GIORNALIERA
 # ---------------------------------------------------------------------------
 
-def simulate_day(prices_real, volumes_real, rng, *,
+def simulate_day(prices_real, volumes_real, signs_real, rng, *,
                  alpha, n_traders, lambda_lmf,
                  volume_model, volume_params,
                  price_model, price_params, bootstrap):
@@ -196,12 +201,12 @@ def simulate_day(prices_real, volumes_real, rng, *,
     n_tot = n_trades + p
 
     signs_all, ids_all = generate_signs(n_tot, alpha, n_traders, lambda_lmf)
-    vols_all = generate_volumes(n_tot, volumes_real, volume_model, volume_params, rng)
+    signed_real = np.abs(volumes_real) * signs_real
+    vols_all = generate_volumes(n_tot, volumes_real, volume_model, volume_params, rng, signed_real=signed_real)
     signed_all = signs_all * vols_all
 
     initial_v, sim_v = signed_all[:p], signed_all[p:]
-    prices = generate_prices(price_model, price_params, sim_v, initial_v, P0, rng,
-                             bootstrap=bootstrap)
+    prices = generate_prices(price_model, price_params, sim_v, initial_v, P0, rng, bootstrap=bootstrap)
     return prices, vols_all[p:], signs_all[p:], ids_all[p:]
 
 
@@ -254,7 +259,7 @@ def run(data_dir=DEFAULT_DATA_DIR,
 
         try:
             prices, volumes, signs, meta_ids = simulate_day(
-                prices_real, volumes_real, rng,
+                prices_real, volumes_real, signs_real, rng,
                 alpha=alpha, n_traders=n_traders, lambda_lmf=lambda_lmf,
                 volume_model=volume_model, volume_params=volume_params,
                 price_model=price_model, price_params=price_params,
@@ -274,12 +279,12 @@ def run(data_dir=DEFAULT_DATA_DIR,
 if __name__ == "__main__":
     run(
         data_dir=DEFAULT_DATA_DIR,
-        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_empirical_tim_0.0_1000",
+        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_normal_abs_tim_0.0_1000",
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
         save_meta_ids=True,
-        volume_model="empirical",   # 'empirical' | 'mem_acd' | 'log_ar'
+        volume_model="normal_abs",   # 'empirical' | 'mem_acd' | 'log_ar' | 'normal_abs'
         price_model="tim",          # 'tim' | 'tim_parametric'
         delta=0.0,
         p_price=1000,

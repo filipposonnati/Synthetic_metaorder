@@ -750,6 +750,27 @@ def sample_empirical_volumes(volumes_list, n_steps, rng):
 
     return rng.choice(flat_volumes, size=n_steps, replace=True)
 
+# ---------------------------------------------------------------------------
+# LAYER 2ter — VOLUMI  (normale sui volumi con segno del giorno, poi |x|)
+# ---------------------------------------------------------------------------
+
+def fit_normal_signed_volume(signed_volumes):
+    """Fitta una normale N(mu, sigma^2) (MLE) sui volumi CON SEGNO di un giorno.
+
+    signed_volumes : array dei volumi con segno (volume * segno) del giorno.
+    Ritorna {'mu', 'sigma'}.
+    """
+    x = np.asarray(signed_volumes, dtype=np.float64).ravel()
+    x = x[np.isfinite(x)]
+    if len(x) < 2:
+        raise ValueError("Servono almeno 2 volumi per fittare la normale.")
+    return {'kind': 'normal_abs', 'mu': float(x.mean()), 'sigma': float(x.std(ddof=0))}
+
+
+def simulate_normal_abs_volume(params, n_steps, rng):
+    """Estrae n_steps volumi da N(mu, sigma^2) e ne prende il valore assoluto."""
+    return np.abs(rng.normal(params['mu'], params['sigma'], size=n_steps))
+
 
 # ---------------------------------------------------------------------------
 # MAIN: calibrazione e salvataggio dei modelli log-AR e MEM (un modello per tutti i giorni)

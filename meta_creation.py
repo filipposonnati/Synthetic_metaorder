@@ -8,10 +8,10 @@ from os import listdir
 import methods
 import gc
 
-#model = 'lmf_1.5_0.3_empirical_tim_param_0.3_1000'
+model = 'lmf_1.5_0.3_normal_abs_tim_0.0_1000'
 #model = 'var_structural_1000'
 #model = 'tim_param_0.3_1000'
-model = ''
+#model = ''
 iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
 
@@ -29,15 +29,8 @@ if not os.path.exists(meta_dir):
 
 paths = np.array(listdir(data_dir))
 
-#configurations = pd.read_csv(f"configurations.csv", header=0)
-
-#for index, configuration in configurations.iterrows():
-#nb_traders = configuration['nb_traders']
-#kind = configuration['kind']
-#exponent = configuration['exponent']
-
-nb_traders = 4
-kind = 'uniform'
+nb_traders = 20
+kind = 'power'
 exponent = 2.0
 
 if nb_traders == 1:
