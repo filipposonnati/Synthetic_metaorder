@@ -125,6 +125,11 @@ def process_model(model, file_name_con_estensione, min_child, n_bins):
 
     res = bin_data(df, n_bins)
 
+    # Istogramma di Q sugli stessi bin (frequenze per la distribuzione), prima di liberare df
+    q_counts = None
+    if res is not None:
+        q_counts, _ = np.histogram(df['MetaVolume'].values, bins=res[1])
+
     # Libera subito il dataframe grezzo: serve solo il risultato del binning
     del df
     gc.collect()
@@ -132,7 +137,7 @@ def process_model(model, file_name_con_estensione, min_child, n_bins):
     if res is None:
         print(f"[WARNING] Binning failed for model='{model}', skipping.")
         return None
-    grouped, _ = res
+    grouped, q_bins = res
 
     max_samples = grouped['sample_count'].max()
     grouped_high_freq = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
@@ -153,12 +158,13 @@ def process_model(model, file_name_con_estensione, min_child, n_bins):
         print(f"[{label_base}] Fit failed, skipping.")
         return None
 
-    return dict(model=model, label=label_base, grouped=grouped, grouped_fit=grouped_high_freq, fit=fit)
+    return dict(model=model, label=label_base, grouped=grouped, grouped_fit=grouped_high_freq, fit=fit,
+                q_counts=q_counts, q_bins=q_bins)
 
 
 def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
-                              n_bins=51, vertical_shift=10.0, min_child=2):
-    """Comparison plot with datasets shifted vertically."""
+                              n_bins=51, vertical_shift=10.0, min_child=2,
+                              show_q_dist=False):
     records = []
 
     for model in models:
@@ -176,14 +182,24 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     inset_items = []
     palette = cm.tab10(np.linspace(0, 1, max(n, 1)))
 
-    fig, ax1 = plt.subplots(figsize=(10, 10))
+    # --- CREAZIONE FIGURA CON SUBPLOTS VERTICALI ---
+    if show_q_dist:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 14), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+    else:
+        fig, ax1 = plt.subplots(figsize=(10, 10))
+        ax2 = None
+
     ax1.set_xscale("log")
     ax1.set_yscale("log")
-    ax1.set_xlabel(r'$Q$')
-    if vertical_shift != 1:
-        ax1.set_ylabel(r'$I(Q)$ (shifted)')
+    ax1.set_ylabel(r'$I(Q)$ (shifted)' if vertical_shift != 1 else r'$I(Q)$')
+
+    if show_q_dist and ax2 is not None:
+        ax2.set_xscale("log")
+        ax2.set_yscale("linear")
+        ax2.set_ylabel('Frequency')
+        ax2.set_xlabel(r'$Q$')
     else:
-        ax1.set_ylabel(r'$I(Q)$')
+        ax1.set_xlabel(r'$Q$')
 
     print(f"\n{'Rank':>5}  {'Model':<20}  {'delta':>7}  {'shift':>8}")
     print("-" * 50)
@@ -211,7 +227,15 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
             marker='o', linestyle='', color=color, alpha=1.0, markersize=5
         )
 
-        # E fai lo stesso per la linea di fit teorica
+        # --- DISTRIBUZIONE DI Q NEL PANNELLO INFERIORE (ax2) CON LINEE A GRADINI ---
+        if show_q_dist and ax2 is not None and rec['q_counts'] is not None:
+            edges = rec['q_bins']
+            ax2.step(
+                edges[:-1], rec['q_counts'], where='post',
+                color=color, linewidth=2.0,
+                label=rf"{label_base.replace('_', ' ').capitalize()}"
+            )
+
         y_line = (Y * shift) * (x_line**(delta))
         ax1.plot(
             x_line, y_line,
@@ -219,7 +243,6 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
             label=fit_label, solid_capstyle='butt'
         )
 
-        # Dati per l'inset sull'area di fitting
         inset_items.append(dict(
             color=color, x_line=x_line, y_line=y_line,
             x_pts=grouped_fit['MetaVolume_mean'].values,
@@ -228,12 +251,11 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
 
     print("-" * 50)
 
-    # --- Inset: zoom sull'area di fitting (in basso a destra) ---
+    # --- Inset sul grafico principale (ax1) ---
     x_lo = min(it['x_line'].min() for it in inset_items)
     x_hi = max(it['x_line'].max() for it in inset_items)
     y_lo = min(min(it['y_line'].min(), it['y_pts'].min()) for it in inset_items)
     y_hi = max(max(it['y_line'].max(), it['y_pts'].max()) for it in inset_items)
-    # piccolo margine (in scala log)
     x_lo, x_hi = x_lo / 1.15, x_hi * 1.15
     y_lo, y_hi = y_lo / 1.15, y_hi * 1.15
 
@@ -247,8 +269,6 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
                    color=it['color'], solid_capstyle='butt')
     axins.set_xlim(x_lo, x_hi)
     axins.set_ylim(y_lo, y_hi)
-    # Tick radi: solo pochi major (1, 2, 5 x 10^n) e nessuna etichetta sui minor,
-    # altrimenti i numeri sull'asse x dell'inset si sovrappongono
     for axis in (axins.xaxis, axins.yaxis):
         axis.set_major_locator(mticker.LogLocator(base=10, subs=(1.0, 2.0, 5.0), numticks=20))
         axis.set_major_formatter(mticker.LogFormatterSciNotation(base=10, labelOnlyBase=False))
@@ -257,15 +277,18 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
     axins.tick_params(labelsize=8)
     axins.grid(True, which='both', linewidth=0.6, alpha=0.6)
     axins.set_facecolor('white')
-    # rettangolo sull'area zoomata + linee di collegamento
     ax1.indicate_inset_zoom(axins, edgecolor='black', alpha=0.8)
 
-    ax1.legend(
-        loc='upper left',
-        bbox_to_anchor=(0.0, 1.0),
-        ncol=1
-    )
+    # --- Legende e Griglie per entrambi i pannelli ---
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    ax1.legend(handles1, labels1, loc='upper left', bbox_to_anchor=(0.0, 1.0), ncol=1)
     ax1.grid(True, which='both', linewidth=1.0, alpha=0.7)
+
+    if show_q_dist and ax2 is not None:
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        ax2.legend(handles2, labels2, loc='upper left', bbox_to_anchor=(0.0, 1.0), ncol=1)
+        ax2.grid(True, which='both', linewidth=1.0, alpha=0.7)
+
     plt.tight_layout()
     plt.savefig(os.path.join('images', f'{image_name}.png'), dpi=150, bbox_inches='tight')
     plt.close()
@@ -273,41 +296,18 @@ def plot_aggregate_comparison(file_name_con_estensione, models, image_name,
 
     return records
 
-def plot_delta_comparison(records, image_name):
-    """Crea un grafico a barre d'errore per confrontare direttamente i delta."""
-    labels = [r['label'].replace('_', ' ').capitalize() for r in records]
-    deltas = [r['fit'][1] for r in records]
-    delta_errs = [r['fit'][3] for r in records]
-
-    fig, ax = plt.subplots()
-    x_pos = np.arange(len(labels))
-    
-    # Disegna i punti con le barre d'errore
-    ax.errorbar(x_pos, deltas, yerr=delta_errs, fmt='.', elinewidth=1.5, capsize=4, color='black', ecolor='black')
-
-    # Linea di riferimento basata sui dati reali (il primo record)
-    ax.axhline(y=0.5, color='blue', linestyle='--', alpha=1.0)
-
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(labels, rotation=30, ha='right')
-    ax.set_ylabel(r'$\delta$')
-    ax.grid(True, axis='y', linestyle=':', alpha=0.7)
-    #ax.legend()
-
-    plt.tight_layout()
-    plt.savefig(os.path.join('images', f'{image_name}_delta_comparison.png'), dpi=150)
-    plt.close()
-
 if __name__ == "__main__":
     file_name_con_estensione = '20_power_2.0.csv'
     function_clean = file_name_con_estensione.replace('.csv', '')
 
-    models = ['', 'tim_1.0_1000', 'tim_0.5_1000', 'tim_0.0_1000']
+    #models = ['', 'tim_1.0_1000', 'tim_0.5_1000', 'tim_0.0_1000']
     #models = ['', 'tim_param_1.0_1000', 'tim_param_0.5_1000', 'tim_param_0.3_1000', 'tim_param_0.0_1000']
-    models = ['', 'var_reduced_1000']
+    #models = ['', 'var_structural_1000']
+    models = ['', 'lmf_1.5_0.3_empirical_tim_0.0_1000', 'lmf_1.5_0.3_empirical_tim_param_0.3_1000']
 
     target_dir = "impact_volume_curve_analysis"
     min_child = 2
+    show_q_dist = True
 
     print("\n" + "="*70)
     print(f"AVVIO ANALISI: {target_dir} (n >= {min_child})")
@@ -315,7 +315,7 @@ if __name__ == "__main__":
 
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    img_comparison = f"{target_dir}/var_reduced_{function_clean}_comparison"
+    img_comparison = f"{target_dir}/lmf_{function_clean}_comparison"
     print(f"Grafico di confronto complessivo: images/{img_comparison}.png")
     records = plot_aggregate_comparison(
         file_name_con_estensione,
@@ -323,7 +323,5 @@ if __name__ == "__main__":
         image_name=img_comparison,
         vertical_shift=1.0,
         min_child=min_child,
+        show_q_dist=show_q_dist,
     )
-
-    if records:
-        plot_delta_comparison(records, img_comparison)
