@@ -7,6 +7,7 @@ import sys
 from os import listdir
 import pandas as pd
 from acf import pooled_acf as pooled_acf_function
+import matplotlib.cm as cm
 
 # ── local imports ─────────────────────────────────────────────────────────────
 _HERE = Path(__file__).parent
@@ -197,7 +198,7 @@ if __name__ == '__main__':
         np.save(cache_path, pooled_lmf_lambda_rand)
         print("Saved pooled ACF to cache.")
 
-# ── Pooled LMF Lambda ACF ──────────────────────────────────────────────────────
+    # ── Pooled LMF Lambda ACF ──────────────────────────────────────────────────────
     cache_path = Path("database/acf_nn.npy")
     if cache_path.is_file():
         pooled_nn = np.load(cache_path)
@@ -234,23 +235,23 @@ if __name__ == '__main__':
 
     # AR
     x_ar, y_ar = log_bin_acf(pooled_ar, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_ar, y_ar, marker='x', linestyle='-', color='red', lw=1.2, label='Volumes AR')
+    ax.loglog(x_ar, y_ar, marker='x', linestyle='-', color=cm.tab10(0), lw=1.2, label='Volumes AR')
 
     # LMF
     x_lmf, y_lmf = log_bin_acf(pooled_lmf_100, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_lmf, y_lmf, marker='+', linestyle='-', color='blue', lw=1.2, label=r'LMF $\alpha = 1.5$ $N = 100$')
+    ax.loglog(x_lmf, y_lmf, marker='+', linestyle='-', color=cm.tab10(1), lw=1.2, label=r'LMF $\alpha = 1.5$ $N = 100$')
 
     # LMF Lambda
     x_lmf_lambda, y_lmf_lambda = log_bin_acf(pooled_lmf_lambda, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_lmf_lambda, y_lmf_lambda, marker='v', linestyle='-', color='green', lw=1.2, label=r'LMF $\alpha = 1.5$ $\lambda = 0.3$')
+    ax.loglog(x_lmf_lambda, y_lmf_lambda, marker='v', linestyle='-', color=cm.tab10(2), lw=1.2, label=r'LMF $\alpha = 1.5$ $\lambda = 0.3$')
 
     # LMF Lambda random
     x_lmf_lambda_rand, y_lmf_lambda_rand = log_bin_acf(pooled_lmf_lambda_rand, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_lmf_lambda_rand, y_lmf_lambda_rand, marker='^', linestyle='-', color='orange', lw=1.2, label=r'LMF $\alpha = 1.5$ $\lambda = 0.3$ $p_{RAND} = 0.27$')
+    ax.loglog(x_lmf_lambda_rand, y_lmf_lambda_rand, marker='^', linestyle='-', color=cm.tab10(3), lw=1.2, label=r'LMF $\alpha = 1.5$ $\lambda = 0.3$ $p_{RAND} = 0.27$')
 
     # Neural Network
     x_nn, y_nn = log_bin_acf(pooled_nn, max_lag, num_bins=NUM_BINS)
-    ax.loglog(x_nn, y_nn, marker='s', linestyle='-', color='purple', lw=1.2, label='Neural Network')
+    ax.loglog(x_nn, y_nn, marker='s', linestyle='-', color=cm.tab10(4), lw=1.2, label='Neural Network')
 
     # ── 6. Teoria e Output ────────────────────────────────────────────────────
     ax.loglog(lags, theory, color='black', lw=1.2, linestyle=':',

@@ -6,6 +6,7 @@ from scipy.odr import ODR, Model, RealData
 import os
 from os import listdir
 import re
+from matplotlib.patches import Patch
 
 DIR = 'database\\meta'
 SAMPLE_THRESHOLD_PCT = 0.1   # as in impact_volume_curve.py: keep bins with count > 0.1 * max
@@ -103,7 +104,15 @@ def odr_regression(a, b, impact, zerr, xerr, yerr, model_kind='linear'):
 # PLOT FUNCTIONS
 # =============================================================================
 
-def plot_histogram_2d(df, n_hist=25, save_path='images\\part_rate\\part_rate_hist_2d.png'):
+def plot_histogram_2d(df, n_hist=31, save_path='images\\part_rate\\part_rate_hist_2d.png'):
+    plt.rcParams.update({
+        'font.size': 16,
+        'axes.titlesize': 22,
+        'axes.labelsize': 20,
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 16,
+        'legend.fontsize': 15
+    })
     valid = df[['a', 'b']].replace([np.inf, -np.inf], np.nan).dropna()
     valid = valid[(valid['a'] > 0) & (valid['b'] > 0)]
     x_edges = np.logspace(np.log10(valid['a'].min()), np.log10(valid['a'].max()), n_hist + 1)
@@ -111,13 +120,23 @@ def plot_histogram_2d(df, n_hist=25, save_path='images\\part_rate\\part_rate_his
     counts, _, _ = np.histogram2d(valid['a'], valid['b'], bins=(x_edges, y_edges))
     fig, ax = plt.subplots(figsize=(10, 8))
     im = ax.pcolormesh(x_edges, y_edges, counts.T, cmap='turbo', shading='auto')
-    ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_xlabel(r'$V/V_D$'); ax.set_ylabel(r'$V/V_P$')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel(r'$V/V_D$')
+    ax.set_ylabel(r'$V/V_P$')
     fig.colorbar(im, ax=ax, label='Frequency')
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save_path='images\\part_rate\\part_rate_fit.png'):
+    plt.rcParams.update({
+        'font.size': 16,
+        'axes.titlesize': 22,
+        'axes.labelsize': 20,
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 16,
+        'legend.fontsize': 15
+    })
     """Figura 1: Superficie di fit e punti binnati dell'intensità."""
     a = grouped['a_mean'].to_numpy()
     b = grouped['b_mean'].to_numpy()
@@ -173,84 +192,34 @@ def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save
                 zerr=log_zerr[sel], xerr=log_xerr[sel], yerr=log_yerr[sel],
                 fmt='none', ecolor='tab:blue', elinewidth=1, alpha=0.7)
 
-    ax.plot_surface(a_s, b_s, z_s, cmap='gray', alpha=0.4, edgecolor='none', rstride=1, cstride=1)
+    ax.plot_surface(a_s, b_s, z_s, cmap='gray', alpha=0.4, edgecolor='none', rstride=1, cstride=1, label='Fitted Surface')
 
     ax.set_xlabel(r'$log_{10}(V/V_D)$', labelpad=10)
     ax.set_ylabel(r'$log_{10}(V/V_P)$', labelpad=10)
-    ax.set_zlabel(r'log_{10}(I)', labelpad=10)
-    ax.view_init(elev=25, azim=135)
+    ax.set_zlabel(r'$log_{10}(I)$', labelpad=20)
+    ax.view_init(elev=25, azim=225)
     ax.legend(loc='upper left')
 
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
-
-def plot_fit_surface_selected_only(grouped, mask_significance, popt, model_kind='linear', save_path='images\\part_rate\\part_rate_fit_selected_only.png'):
-    """Figura 3: Superficie di fit e unicamente i punti selezionati (senza i punti scartati)."""
-    a = grouped['a_mean'].to_numpy()
-    b = grouped['b_mean'].to_numpy()
-    impact = grouped['impact_mean'].to_numpy()
-    
-    xerr = grouped['a_err'].to_numpy()
-    yerr = grouped['b_err'].to_numpy()
-    zerr = grouped['err'].to_numpy()
-
-    valid = (a > 0) & (b > 0) & (impact > 0)
-    a, b, impact = a[valid], b[valid], impact[valid]
-    mask = mask_significance.loc[grouped.index][valid].to_numpy()
-    xerr, yerr, zerr = xerr[valid], yerr[valid], zerr[valid]
-
-    # Manteniamo unicamente i dati selezionati dalla maschera
-    log_a = np.log10(a[mask])
-    log_b = np.log10(b[mask])
-    log_impact = np.log10(impact[mask])
-
-    ln10 = np.log(10)
-    log_xerr = xerr[mask] / (a[mask] * ln10)
-    log_yerr = yerr[mask] / (b[mask] * ln10)
-    log_zerr = zerr[mask] / (impact[mask] * ln10)
-
-    # Creazione della griglia per la superficie di fit
-    a_range = np.linspace(log_a.min(), log_a.max(), 40)
-    b_range = np.linspace(log_b.min(), log_b.max(), 40)
-    a_s, b_s = np.meshgrid(a_range, b_range)
-
-    if model_kind == 'linear':
-        z_s = popt[0] + popt[1] * a_s + popt[2] * b_s
-    else:
-        z_s_orig = popt[0] * ((10**a_s) ** popt[1]) * ((10**b_s) ** popt[2])
-        z_s = np.log10(np.clip(z_s_orig, 1e-12, None))
-
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Plot dei soli punti selezionati con le barre d'errore
-    ax.scatter(log_a, log_b, log_impact,
-               s=35, color='tab:blue', alpha=0.9, edgecolors='k', linewidth=0.3, label='Binned Data')
-    ax.errorbar(log_a, log_b, log_impact,
-                zerr=log_zerr, xerr=log_xerr, yerr=log_yerr,
-                fmt='none', ecolor='tab:blue', elinewidth=1, alpha=0.8)
-
-    # Superficie di fit
-    ax.plot_surface(a_s, b_s, z_s, cmap='gray', alpha=0.5, edgecolor='none', rstride=1, cstride=1)
-
-    ax.set_xlabel(r'$log_{10}(V/V_D)$', labelpad=10)
-    ax.set_ylabel(r'$log_{10}(V/V_P)$', labelpad=10)
-    ax.set_zlabel(r'log_{10}(I)', labelpad=10)
-    ax.view_init(elev=25, azim=135)
-    ax.legend(loc='upper left')
+    ax.tick_params(axis='z', pad=10)
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
     plt.close()
 
 def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\part_rate_counts.png'):
-    """Figura 2: Istogramma 3D con altezza e colore proporzionali al count."""
+    plt.rcParams.update({
+        'font.size': 16,
+        'axes.titlesize': 22,
+        'axes.labelsize': 20,
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 16,
+        'legend.fontsize': 15
+    })
     a = grouped['a_mean'].to_numpy()
     b = grouped['b_mean'].to_numpy()
     impact = grouped['impact_mean'].to_numpy()
     counts = grouped['sample_count'].to_numpy()
-    
+
     valid = (a > 0) & (b > 0) & (impact > 0)
     a, b, impact, counts = a[valid], b[valid], impact[valid], counts[valid]
     mask = mask_significance.loc[grouped.index][valid].to_numpy()
@@ -258,48 +227,64 @@ def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\pa
     log_a = np.log10(a)
     log_b = np.log10(b)
 
+    elev, azim = 25, 245
+
     fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
+    # computed_zorder=False: matplotlib rispetta l'ordine di disegno che decidiamo noi
+    ax = fig.add_subplot(111, projection='3d', computed_zorder=False)
+    ax.view_init(elev=elev, azim=azim)
 
-    sel = mask
-    unsel = ~mask
-
-    dx = (log_a.max() - log_a.min()) / 45
-    dy = (log_b.max() - log_b.min()) / 45
+    dx = ((log_a.max() - log_a.min()) / 45) * 0.9
+    dy = ((log_b.max() - log_b.min()) / 45) * 0.9
     z_floor = 0
 
-    # 1. Barre dei punti scartati (grigie e trasparenti)
-    if np.any(unsel):
-        ax.bar3d(log_a[unsel] - dx/2, log_b[unsel] - dy/2, z_floor,
-                 dx, dy, counts[unsel].astype(float),
-                 color='gray', alpha=0.2, edgecolor='none', label='Discarded')
+    rgba_colors = np.zeros((len(log_a), 4))
+    rgba_colors[~mask] = [0.85, 0.85, 0.85, 1.0]
+    if np.any(mask):
+        norm = plt.Normalize(vmin=counts[mask].min(), vmax=counts[mask].max())
+        rgba_colors[mask] = cm.viridis(norm(counts[mask].astype(float)))
 
-    # 2. Barre dei punti selezionati (altezza e colore basati sul COUNT)
-    if np.any(sel):
-        norm = plt.Normalize(vmin=counts[sel].min(), vmax=counts[sel].max())
-        colors = cm.viridis(norm(counts[sel].astype(float)))
+    # Ordinamento back-to-front: distanza lungo la direzione della camera
+    az, el = np.deg2rad(azim), np.deg2rad(elev)
+    cam_dir = np.array([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az)])
+    # profondità = proiezione sul vettore camera (più grande = più vicino alla camera)
+    depth = log_a * cam_dir[0] + log_b * cam_dir[1]
+    order = np.argsort(depth)          # prima le più lontane, ultime le più vicine
 
-        ax.bar3d(log_a[sel] - dx/2, log_b[sel] - dy/2, z_floor,
-                 dx, dy, counts[sel].astype(float),
-                 color=colors, alpha=0.85, edgecolor='k', linewidth=0.2, label='Selected')
+    # Una chiamata a bar3d per barra, in ordine, così l'ordine di disegno è rispettato
+    for i in order:
+        ax.bar3d(log_a[i] - dx / 2, log_b[i] - dy / 2, z_floor,
+                 dx, dy, float(counts[i]),
+                 color=rgba_colors[i], alpha=1.0,
+                 edgecolor='black', linewidth=0.4, shade=False)
 
-        # Colorbar basata sul count
-        m = cm.ScalarMappable(cmap=cm.viridis, norm=norm)
-        m.set_array(counts[sel].astype(float))
-        cbar = fig.colorbar(m, ax=ax, shrink=0.5, aspect=12, pad=0.1)
-        cbar.set_label('Count')
+    ax.set_xlabel(r'$\log_{10}(V/V_D)$', labelpad=12)
+    ax.set_ylabel(r'$\log_{10}(V/V_P)$', labelpad=12)
+    ax.zaxis.set_rotate_label(False)
+    ax.set_zlabel('Count', labelpad=38, rotation=90)
 
-    ax.set_xlabel(r'$\log_{10}(V/V_D)$', labelpad=10)
-    ax.set_ylabel(r'$\log_{10}(V/V_P)$', labelpad=10)
-    ax.set_zlabel('Count', labelpad=10)
-    ax.view_init(elev=25, azim=135)
-    ax.legend(loc='upper left')
+    ax.tick_params(axis='z', pad=20)
+
+    legend_elements = [
+        Patch(facecolor=[0.85, 0.85, 0.85, 1.0], edgecolor='black', linewidth=0.5, label='Discarded'),
+        Patch(facecolor=cm.viridis(0.5), edgecolor='black', linewidth=0.5, label='Selected')
+    ]
+    ax.legend(handles=legend_elements, loc='upper left')
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
     plt.close()
 
 def plot_bucci(model = ''):
+    plt.rcParams.update({
+        'font.size': 12,
+        'axes.titlesize': 18,
+        'axes.labelsize': 16,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 11
+    })
+
     dir = 'database\\meta'
 
     if model != "":
@@ -351,7 +336,7 @@ def plot_bucci(model = ''):
         df_res = df_res[df_res['ParticipationRate'] > 0]
         pr = df_res['ParticipationRate'].to_numpy()
 
-        hist_bins = np.logspace(np.log10(pr.min()), np.log10(pr.max()), 51)
+        hist_bins = np.logspace(np.log10(pr.min()), np.log10(pr.max()), 101)
         counts, edges = np.histogram(pr, bins=hist_bins, density=False)
 
         ax_hist.step(
@@ -383,6 +368,7 @@ def plot_bucci(model = ''):
     ax_main.set_xscale("log")
     ax_main.set_yscale("log")
     ax_main.set_ylabel(r'$I(Q) / \sqrt{Q}$')
+    ax_main.set_ylim(2e-1, 1e1)
     ax_main.grid(True, which="both", ls="-")
     ax_main.legend(loc='upper right', bbox_to_anchor=(0.99, 0.99), borderaxespad=0)
     plt.setp(ax_main.get_xticklabels(), visible=False)
@@ -406,6 +392,15 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     aggiungendo la suddivisione in decili del Participation Rate e la curva All Data.
     Inoltre, genera la figura dedicata alla distribuzione del Participation Rate divisa in decili.
     """
+    plt.rcParams.update({
+        'font.size': 12,
+        'axes.titlesize': 18,
+        'axes.labelsize': 16,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 11
+    })
+
     # 1. Caricamento del file esattamente come in impact_volume_curve.py
     if os.path.exists(os.path.join(dir_path, path + '_' + str(min_nb_child) + '.csv')):
         data_path = os.path.join(dir_path, path + '_' + str(min_nb_child) + '.csv')
@@ -471,7 +466,7 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     ax_dist.set_ylabel('Count')
     #ax_dist.set_title('Distribution Splitting')
     ax_dist.grid(True, which='both', ls='--', alpha=0.3)
-    ax_dist.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, fontsize=9)
+    ax_dist.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(dist_save_path), exist_ok=True)
@@ -542,7 +537,15 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
 
             x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
             y_fit = (10**intercept) * (x_fit**slope)
-            fit_res = (x_fit, y_fit, slope, slope_err)
+
+            # Calcolo di R^2 in log-spazio
+            pred_log = intercept + slope * log_x
+            ss_tot = np.sum((log_y - np.mean(log_y))**2)
+            ss_res = np.sum((log_y - pred_log)**2)
+            r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else np.nan
+            
+            # Restituiamo anche r2
+            fit_res = (x_fit, y_fit, slope, slope_err, r2)
 
         return (x_data, y_data), fit_res
 
@@ -568,10 +571,10 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
         ax1.plot(x_data, y_data, linestyle='', marker='o', markersize=3.5, color=color, alpha=1.0)
 
         if fit_res is not None:
-            x_fit, y_fit, slope, slope_err = fit_res
+            x_fit, y_fit, slope, slope_err, r2 = fit_res
             ax1.plot(
                 x_fit, y_fit, linestyle='--', linewidth=1.2, color=color,
-                label=f"{label_str} ${slope:.3f} \\pm {slope_err:.3f}$"
+                label=f"{label_str}: ${slope:.3f} \\pm {slope_err:.3f}$ ($R^2={r2:.3f}$)"
             )
 
     # 2. PLOT DATI COMPLETI ("All Data" usando l'intero df_res filtrato come in impact_volume_curve.py)
@@ -584,7 +587,7 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
         ax1.plot(x_data_all, y_data_all, linestyle='', marker='o', markersize=5, color='black', alpha=1.0)
 
         if fit_res_all is not None:
-            x_fit_all, y_fit_all, slope_all, slope_err_all = fit_res_all
+            x_fit_all, y_fit_all, slope_all, slope_err_all, r2_all = fit_res_all
             ax1.plot(
                 x_fit_all, y_fit_all, linestyle='-', linewidth=2.5, color='black',
                 label=f"All Data ${slope_all:.3f} \\pm {slope_err_all:.3f}$"
@@ -598,12 +601,15 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
         y_ref = x_ref**0.5
         ax1.plot(x_ref, y_ref, linestyle='-', color='black', linewidth=1.2, label=r'$\sqrt{Q}$')
 
+    ax1.set_ylim([1e-3, 1e-1])
+    ax1.set_xlim([1e-6, 1e-2])
+
     ax1.set_xscale('log')
     ax1.set_yscale('log')
     ax1.set_xlabel(r'$Q$')
     ax1.set_ylabel(r'$I$', color='black')
     ax1.grid(True, which="both", ls="-", alpha=0.2)
-    ax1.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True, fontsize=9)
+    ax1.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -613,7 +619,7 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
 
 if __name__ == '__main__':
     nb_traders = 20
-    kind = 'power'
+    kind = 'uniform'
     exp = '2.0'
     #algorithm = 'maitrier'
 
@@ -666,8 +672,6 @@ if __name__ == '__main__':
 
     # Figura 1: Superficie di fit e punti dell'intensità
     plot_fit_surface(grouped, mask_significance, popt, model_kind=MODEL_KIND, save_path=f'images\\part_rate\\part_rate_fit_{conf}.png')
-
-    plot_fit_surface_selected_only(grouped, mask_significance, popt, model_kind=MODEL_KIND, save_path=f'images\\part_rate\\part_rate_fit_selected_{conf}.png')
 
     # Figura 2: Istogramma 3D dei conteggi con colore basato sull'intensità
     plot_count_bars(grouped, mask_significance, save_path=f'images\\part_rate\\part_rate_counts_{conf}.png')

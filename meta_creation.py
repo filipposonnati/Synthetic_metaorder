@@ -8,11 +8,11 @@ from os import listdir
 import methods
 import gc
 
-model = 'lmf_1.5_0.3_normal_abs_tim_0.0_1000'
+#model = 'lmf_1.5_0.3_normal_abs_tim_0.0_1000'
 #model = 'var_structural_1000'
 #model = 'tim_param_0.3_1000'
-#model = ''
-model = 'iid_gaussian_tim_parametric_0.3_1000'
+model = ''
+#model = 'iid_gaussian_tim_parametric_0.3_1000'
 iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
 
@@ -30,8 +30,8 @@ if not os.path.exists(meta_dir):
 
 paths = np.array(listdir(data_dir))
 
-nb_traders = 20
-kind = 'power'
+nb_traders = 10
+kind = 'uniform'
 exponent = 2.0
 
 if nb_traders == 1:
