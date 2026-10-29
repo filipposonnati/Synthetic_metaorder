@@ -31,10 +31,10 @@ os.makedirs(output_dir, exist_ok=True)
 show_q_dist = True  # Flag to display Q distribution on the right axis
 
 #model = 'lmf_1.5_0.3_normal_abs_tim_0.0_1000'
-#model = 'var_structural_1000'
-model = 'tim_0.0_1000'
+model = 'var_1000'
+#model = 'tim_0.0_1000'
 #model = ''
-model = 'iid_gaussian_tim_parametric_0.3_1000'
+#model = 'iid_gaussian_tim_parametric_0.3_1000'
 
 algorithm = 'maitrier' # 'maitrier' or lmf
 

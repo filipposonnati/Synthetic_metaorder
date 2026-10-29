@@ -99,8 +99,11 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
 
     trades.drop(trades.tail(1).index, inplace=True)
 
+    # Volumes normalization
     trades['Volume'] = trades['quantity'] / trades['DailyVolume']
-    trades['TransactionTime'] = trades['Volume'].cumsum()
+
+    trades['EndTransactionTime'] = trades['Volume'].cumsum()
+    trades['BeginTransactionTime'] = trades['EndTransactionTime'] - trades['Volume']
 
     trades.drop(columns=['price', 'quantity', 'DailySigma'], inplace=True)
 
@@ -120,20 +123,16 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
         1, 0
     ).cumsum() + start_id
 
-    start_cum_volume = sorted_trades.groupby('metaid')['TransactionTime'].transform('first')
-    start_volume = sorted_trades.groupby('metaid')['Volume'].transform('first')
-
-    # Volume traded by everyone until a certain point
-    sorted_trades['TradedVolume'] = sorted_trades['TransactionTime'] - start_cum_volume + start_volume
+    # Volume traded by everyone until a certain point, starting from the beginning of the meta-order
+    start_t = sorted_trades.groupby('metaid')['BeginTransactionTime'].transform('first')
+    sorted_trades['TradedVolume'] = sorted_trades['EndTransactionTime'] - start_t
 
     # Partial impact
     start_prices = sorted_trades.groupby('metaid')['BeginMid'].transform('first')
     sorted_trades['PartialImpact'] = (sorted_trades['EndMid'] - start_prices) * sorted_trades['sign']
-    sorted_trades['PartialImpact_pre'] = (sorted_trades['BeginMid'] - start_prices) * sorted_trades['sign']
 
     # Partial volume
     sorted_trades['PartialVolume'] = sorted_trades.groupby('metaid')['Volume'].cumsum()
-    sorted_trades['EndTransactionTime'] = sorted_trades['TransactionTime']
 
     # Aggregate metaorders
     metaorders_agg = sorted_trades.groupby('metaid').agg({
@@ -146,12 +145,11 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
         'Volume': 'sum',
         'TradedVolume': 'last',
         'DailyVolume': 'first',
-        'TransactionTime': 'first',
+        'BeginTransactionTime': 'first',
         'EndTransactionTime': 'last'
     }).reset_index()
 
     sorted_trades['TradedVolume'] = sorted_trades['TradedVolume'] / sorted_trades.groupby('metaid')['TradedVolume'].transform('last')
-
 
     nb_child = sorted_trades.groupby('metaid').size().reset_index(name='NbChild')
     metaorders_agg = metaorders_agg.merge(nb_child, on='metaid')
@@ -166,7 +164,6 @@ def generate(path, nb_traders, kind, exponent, start_id=0, data_dir='database\\d
     sorted_trades['ElapsedTime'] = (sorted_trades['BeginTime'] - begintime).dt.total_seconds()
 
     sorted_trades['Ratio'] = sorted_trades['PartialImpact'] / np.sqrt(sorted_trades['MetaVolume'])
-    sorted_trades['Ratio_pre'] = sorted_trades['PartialImpact_pre'] / np.sqrt(sorted_trades['MetaVolume'])
 
     for col in ['EndTime', 'day', 'EndTransactionTime']:
         if col in sorted_trades.columns:

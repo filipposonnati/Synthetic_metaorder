@@ -29,7 +29,7 @@ def safe_err(std_col, count_col, mean_col=None, fallback=1e-8):
     err = np.where(count_col > 1, std_col / np.sqrt(count_col), fallback)
     return pd.Series(err, index=std_col.index)
 
-def compute_binned_stats(df, n_bins=31, sample_threshold_pct=SAMPLE_THRESHOLD_PCT):
+def compute_binned_stats(df, n_bins=51, sample_threshold_pct=SAMPLE_THRESHOLD_PCT):
     """Bin original values with logarithmically spaced edges; never log the means."""
     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['a', 'b', 'MetaImpact']).copy()
     df = df[(df['a'] > 0) & (df['b'] > 0)]
@@ -104,7 +104,7 @@ def odr_regression(a, b, impact, zerr, xerr, yerr, model_kind='linear'):
 # PLOT FUNCTIONS
 # =============================================================================
 
-def plot_histogram_2d(df, n_hist=31, save_path='images\\part_rate\\part_rate_hist_2d.png'):
+def plot_histogram_2d(df, n_hist=51, save_path='images\\part_rate\\part_rate_hist_2d.png'):
     plt.rcParams.update({
         'font.size': 16,
         'axes.titlesize': 22,
@@ -199,12 +199,13 @@ def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save
     ax.set_zlabel(r'$log_{10}(I)$', labelpad=20)
     ax.view_init(elev=25, azim=225)
     ax.legend(loc='upper left')
+    ax.set_zlim([-4, 0])
 
     ax.tick_params(axis='z', pad=10)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
-    plt.close()
+    plt.show()
 
 def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\part_rate_counts.png'):
     plt.rcParams.update({
@@ -374,7 +375,7 @@ def plot_bucci(model = ''):
     plt.setp(ax_main.get_xticklabels(), visible=False)
 
     ax_hist.set_xscale("log")
-    ax_hist.set_xlabel(r'$\phi = Q / Q_P$')
+    ax_hist.set_xlabel(r'$\pi = Q / Q_P$')
     ax_hist.set_ylabel('Count')
     ax_hist.grid(True, which="both", ls="-")
     current_xlim = ax_hist.get_xlim()
@@ -619,7 +620,7 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
 
 if __name__ == '__main__':
     nb_traders = 20
-    kind = 'uniform'
+    kind = 'power'
     exp = '2.0'
     #algorithm = 'maitrier'
 
@@ -627,6 +628,8 @@ if __name__ == '__main__':
         conf = f'{nb_traders}_{kind}'
     else:
         conf = f'{nb_traders}_{kind}_{exp}'
+
+    print(conf)
 
     path = 'meta_' + conf
     PATH = f'meta_{conf}.csv'
@@ -644,7 +647,7 @@ if __name__ == '__main__':
     df_res['a'] = df_res['MetaVolume']
     df_res['b'] = df_res['MetaVolume'] / df_res['TradedVolume']
 
-    grouped, mask_significance = compute_binned_stats(df_res, n_bins=31)
+    grouped, mask_significance = compute_binned_stats(df_res, n_bins=51)
     selected = grouped.loc[mask_significance]
     a_f = selected['a_mean'].to_numpy()
     b_f = selected['b_mean'].to_numpy()
@@ -653,7 +656,7 @@ if __name__ == '__main__':
     yerr_f = selected['b_err'].to_numpy()
     zerr_f = selected['err'].to_numpy()
 
-    plot_histogram_2d(df_res, save_path=f'images\\part_rate\\part_rate_his_{conf}.png')
+    plot_histogram_2d(df_res, save_path=f'images\\part_rate\\{conf}_part_rate_hist.png')
     popt, perr, r2 = odr_regression(a_f, b_f, i_f, zerr_f, xerr_f, yerr_f, model_kind=MODEL_KIND)
     
     if MODEL_KIND == 'linear':
@@ -671,16 +674,16 @@ if __name__ == '__main__':
     print(f'R2 (log scale)={r2:.4f}')
 
     # Figura 1: Superficie di fit e punti dell'intensità
-    plot_fit_surface(grouped, mask_significance, popt, model_kind=MODEL_KIND, save_path=f'images\\part_rate\\part_rate_fit_{conf}.png')
+    plot_fit_surface(grouped, mask_significance, popt, model_kind=MODEL_KIND, save_path=f'images\\part_rate\\{conf}_part_rate_fit.png')
 
     # Figura 2: Istogramma 3D dei conteggi con colore basato sull'intensità
-    plot_count_bars(grouped, mask_significance, save_path=f'images\\part_rate\\part_rate_counts_{conf}.png')
+    plot_count_bars(grouped, mask_significance, save_path=f'images\\part_rate\\{conf}_part_rate_counts.png')
 
     plot_impact_volume_by_deciles(
         dir_path=dir_path,
         path=path,
         n_deciles=10,
         min_nb_child=1,
-        save_path=f'images/part_rate/impact_volume_deciles_{conf}.png',
-        dist_save_path=f'images/part_rate/part_rate_deciles_dist_{conf}.png'
+        save_path=f'images/part_rate/{conf}_impact_volume_deciles.png',
+        dist_save_path=f'images/part_rate/{conf}_part_rate_deciles_dist.png'
     )

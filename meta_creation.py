@@ -8,10 +8,10 @@ from os import listdir
 import methods
 import gc
 
-#model = 'lmf_1.5_0.3_normal_abs_tim_0.0_1000'
-#model = 'var_structural_1000'
-#model = 'tim_param_0.3_1000'
-model = ''
+model = 'lmf_1.5_0.3_empirical_tim_0.0_1000'
+#model = 'var_1000'
+#model = 'tim_0.0_1000'
+#model = ''
 #model = 'iid_gaussian_tim_parametric_0.3_1000'
 iterations = 1  # Added iterations variable with default value of 10
 n_filter = 2
@@ -30,7 +30,7 @@ if not os.path.exists(meta_dir):
 
 paths = np.array(listdir(data_dir))
 
-nb_traders = 10
+nb_traders = 20
 kind = 'uniform'
 exponent = 2.0
 
@@ -48,12 +48,12 @@ filename = filename + '.csv'
 
 file_path = os.path.join(meta_dir, filename)
 
+print(file_path, filename)
+
 # Skip configuration if the target file already exists
 if os.path.exists(file_path):
     print(f"Skipping configuration ({nb_traders}, {kind}, {exponent}) — {filename} already exists.")
     exit()
-
-print(nb_traders, kind, exponent)
 
 l = 0
 first = True

@@ -681,7 +681,7 @@ if __name__ == '__main__':
 
     p = 1000
     delta = 0.0
-    fitting_window = 100          # number of trading days used for the fit
+    fitting_window = 200          # number of trading days used for the fit
     bootstrap_residuals = True
     joint_bootstrap = False
 

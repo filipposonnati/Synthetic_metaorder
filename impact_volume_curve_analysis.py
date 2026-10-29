@@ -302,8 +302,8 @@ if __name__ == "__main__":
 
     #models = ['', 'tim_1.0_1000', 'tim_0.5_1000', 'tim_0.0_1000']
     #models = ['', 'tim_param_1.0_1000', 'tim_param_0.5_1000', 'tim_param_0.3_1000', 'tim_param_0.0_1000']
-    #models = ['', 'var_structural_1000']
-    models = ['', 'lmf_1.5_0.3_empirical_tim_0.0_1000', 'lmf_1.5_0.3_empirical_tim_param_0.3_1000']
+    models = ['', 'var_1000']
+    #models = ['', 'lmf_1.5_0.3_empirical_tim_0.0_1000', 'lmf_1.5_0.3_empirical_tim_param_0.3_1000']
 
     target_dir = "impact_volume_curve_analysis"
     min_child = 2
@@ -315,7 +315,7 @@ if __name__ == "__main__":
 
     os.makedirs(os.path.join("images", target_dir), exist_ok=True)
 
-    img_comparison = f"{target_dir}/lmf_{function_clean}_comparison"
+    img_comparison = f"{target_dir}/var_{function_clean}_comparison"
     print(f"Grafico di confronto complessivo: images/{img_comparison}.png")
     records = plot_aggregate_comparison(
         file_name_con_estensione,

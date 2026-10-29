@@ -552,7 +552,7 @@ if __name__ == '__main__':
     beta_grid = None              # es. np.linspace(0.05, 0.6, 12) per stimare beta
     delta = 0.3
     kernel_L = 500                # lunghezza del propagatore (idealmente <= p)
-    fitting_window = 100          # giorni usati per il fit
+    fitting_window = 200          # giorni usati per il fit
     bootstrap_residuals = True
     trim_top = True
     top_frac = 0.05

@@ -26,8 +26,8 @@ from os import listdir
 from pathlib import Path
 from types import SimpleNamespace
 import os
+from numpy.lib.stride_tricks import sliding_window_view
 
-from var_reduced import _blocks, _oos_stats, plot_residuals, trim_top_volume
 from utils import clear_data, open_data, save_simulated_data
 
 _SURFACE = "#fcfcfb"
@@ -38,6 +38,82 @@ _BLUE = "#2a78d6"    # volumes
 _ORANGE = "#eb6834"  # returns
 
 _SERIES = ("volumes", "returns", "returns_lagged")
+
+def _blocks(returns, volumes, p, chunk):
+    """Yield blocks (X, y) of at most `chunk` rows for one day.
+
+    y = [V_t, R_t]; X = [V_{t-1}, R_{t-1}, V_{t-2}, R_{t-2}, ..., V_{t-p}, R_{t-p}]
+    (same column ordering as statsmodels' VAR). Lags stay inside the day and the
+    full design matrix is never built."""
+    returns = np.asarray(returns, dtype=float)
+    volumes = np.asarray(volumes, dtype=float)
+    if len(returns) != len(volumes):
+        raise ValueError("returns and volumes must have the same length")
+    n = len(volumes)
+    if n <= p:
+        return
+
+    data = np.column_stack([volumes, returns])                          # (n, 2)
+    # view (n-p, 2, p): [row, variable, lag-1], without copying
+    W = sliding_window_view(data, p, axis=0)[:n - p, :, ::-1]
+
+    for s in range(0, n - p, chunk):
+        e = min(s + chunk, n - p)
+        X = np.ascontiguousarray(W[s:e].transpose(0, 2, 1)).reshape(e - s, 2 * p)
+        yield X, data[p + s:p + e]
+
+def _oos_stats(n, sy, sy2, ssr, n_reg):
+    """R2 around the mean of the evaluated sample."""
+    if n == 0:
+        return {"n": 0, "mse": np.nan, "rmse": np.nan, "rsquared": np.nan, "rsquared_adj": np.nan}
+    sst = sy2 - sy ** 2 / n
+    r2 = 1.0 - ssr / sst
+    r2_adj = 1.0 - (1.0 - r2) * (n - 1) / (n - n_reg)
+    return {"n": int(n), "mse": ssr / n, "rmse": float(np.sqrt(ssr / n)),
+            "rsquared": float(r2), "rsquared_adj": float(r2_adj)}
+
+def plot_residuals(residuals, names=("Volumes", "Returns"), save_path=None, step=10):
+    """Histogram of the residuals, using one residual every `step` (step=1 -> all).
+    residuals: array (n, 2), one column per equation."""
+    fig, axes = plt.subplots(1, len(names), figsize=(11, 4))
+
+    for k, name in enumerate(names):
+        e = np.asarray(residuals[:, k], dtype=float)
+        e = e[~np.isnan(e)][::step]
+
+        mean = np.mean(e)
+        sd = np.std(e, ddof=1)
+        lo, hi = mean - 3.5 * sd, mean + 3.5 * sd
+        ax = axes[k]
+
+        # fixed number of bins inside the visible range (bins='auto' explodes with heavy tails)
+        ax.hist(e, bins=200, range=(lo, hi), density=True,
+                alpha=0.8, edgecolor='white', color='#1f77b4')
+
+        ax.set_xlim(lo, hi)
+        ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 3))
+        ax.tick_params(axis='x', rotation=15, labelsize=9)
+
+        ax.set_title(f"{name} residuals distribution (1 every {step})", fontsize=11, pad=10)
+        ax.set_xlabel("residual")
+        ax.set_ylabel("density")
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150)
+        plt.close(fig)
+    else:
+        plt.show()
+
+def trim_top_volume(prices, volumes, signs, top_frac=0.05):
+    """Drop the transactions whose |volume| is in the top `top_frac` of the day.
+    Applied on the raw tick series, before computing returns, so that the
+    remaining ticks form a consistent series (returns between consecutive kept ticks)."""
+    prices, volumes, signs = map(np.asarray, (prices, volumes, signs))
+    thr = np.quantile(np.abs(volumes), 1.0 - top_frac)
+    keep = np.abs(volumes) <= thr
+    return prices[keep], volumes[keep], signs[keep]
 
 
 # ----------------------------------------------------------------------------
@@ -259,6 +335,11 @@ def plot_var_structural_fit(results, out_dir=None, residuals=True, resid_step=10
     sig = np.asarray(results["sigma_cov"])
     corr_red = sig[0, 1] / np.sqrt(sig[0, 0] * sig[1, 1])
 
+    def _cum(vals):
+        c = np.nancumsum(vals, axis=0)
+        c[np.isnan(vals)] = np.nan      # il lag 0 non esiste per i pannelli senza effetto contemporaneo
+        return c
+
     def full(coefs, gamma):
         """(p+1, eq, reg): lag 0 = gamma solo per (R <- V), altrove 0 (non esiste)."""
         out = np.full((p + 1, 2, 2), np.nan)
@@ -306,7 +387,7 @@ def plot_var_structural_fit(results, out_dir=None, residuals=True, resid_step=10
 
     base = f"Structural VAR({p}) V→R"
     vals = full(np.asarray(mdl.coefs), mdl.gamma)
-    draw_grid(vals, "coefficient", "{reg}(t-k) → {eq}(t)",
+    draw_grid(_cum(vals), "coefficient", "{reg}(t-k) → {eq}(t)",
               f"{base} - gamma = {mdl.gamma:.3e} - reduced-form residual corr = {corr_red:.3f}",
               "var_fit.png", annotate=True)
     draw_grid(np.nancumsum(vals, axis=0), "cumulative sum of coefficients",
@@ -317,7 +398,7 @@ def plot_var_structural_fit(results, out_dir=None, residuals=True, resid_step=10
         print("coefs_std not available: refit to get the standardized figures")
     else:
         vals_s = full(np.asarray(mdl.coefs_std), mdl.gamma_std)
-        draw_grid(vals_s, "standardized coefficient", "{reg}(t-k) → {eq}(t)",
+        draw_grid(_cum(vals_s), "standardized coefficient", "{reg}(t-k) → {eq}(t)",
                   f"{base} - standardized coefficients (comparable)", "var_fit_std.png")
         draw_grid(np.nancumsum(vals_s, axis=0), "cumulative standardized coefficient",
                   "Cumulative {reg}(t-k) → {eq}(t)",
@@ -433,7 +514,7 @@ if __name__ == '__main__':
     paths = np.array(sorted(listdir('..\\database\\data')))   # sorted -> chronological order
 
     p = 1000
-    fitting_window = 100          # number of trading days used for the fit
+    fitting_window = 200          # number of trading days used for the fit
     bootstrap_residuals = True
     trim_top = True               # False restores the original behaviour
     top_frac = 0.05               # fraction of largest |volume| trades dropped each day
