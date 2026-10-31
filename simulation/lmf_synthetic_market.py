@@ -279,14 +279,14 @@ def run(data_dir=DEFAULT_DATA_DIR,
 if __name__ == "__main__":
     run(
         data_dir=DEFAULT_DATA_DIR,
-        out_dir=Path("..") / "database" / "data_lmf_1.5_0.3_normal_abs_tim_0.0_1000",
+        out_dir=Path("..") / "database" / "data_lmf_emp_tim_param_1.0",
         alpha=1.5,
         n_traders=None,
         lambda_lmf=0.3,
         save_meta_ids=True,
-        volume_model="normal_abs",   # 'empirical' | 'mem_acd' | 'log_ar' | 'normal_abs'
-        price_model="tim",          # 'tim' | 'tim_parametric'
-        delta=0.0,
+        volume_model="empirical",   # 'empirical' | 'mem_acd' | 'log_ar' | 'normal_abs'
+        price_model="tim_parametric",          # 'tim' | 'tim_parametric'
+        delta=1.0,
         p_price=1000,
         bootstrap=True,
         seed=42,

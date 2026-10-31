@@ -85,7 +85,10 @@ def generate_lmf(path, data_dir, start_id=0, include_noise=False):
     df = df.iloc[:-1].copy()
 
     df['Volume'] = df['quantity'] / df['DailyVolume']
-    df['TransactionTime'] = df['Volume'].cumsum()      # su tutti i trade, rumore incluso
+    # Tempo di transazione (volume di mercato cumulato nel giorno, rumore incluso):
+    # fine del trade = cumulato inclusivo; inizio del trade = fine - proprio volume
+    df['EndTransactionTime'] = df.groupby('day')['Volume'].cumsum()
+    df['BeginTransactionTime'] = df['EndTransactionTime'] - df['Volume']
     df['BeginTime'] = df['timestamp']
     df['EndTime'] = df['timestamp']
     df['trader'] = 'LMF'
@@ -106,13 +109,13 @@ def generate_lmf(path, data_dir, start_id=0, include_noise=False):
     df = df.sort_values('key', kind='stable')           # dentro ogni metaordine: ordine temporale
     df['metaid'] = df.groupby('key').ngroup() + 1 + start_id
 
-    # Frazione di volume scambiato da tutti, relativa all'inizio del metaordine
+    # Volume di mercato (di tutti) dall'inizio del primo figlio alla fine del figlio corrente.
+    # Il valore a fine metaordine ('last') e' il V_P usato per il tasso di partecipazione.
+    # (nota: la versione frazionaria per figlio andrebbe in una colonna separata,
+    #  mai sovrascrivendo TradedVolume prima dell'aggregazione)
     g = df.groupby('metaid')
-    start_cum_volume = g['TransactionTime'].transform('first')
-    start_volume = g['Volume'].transform('first')
-    df['TradedVolume'] = df['TransactionTime'] - start_cum_volume + start_volume
-    df['TradedVolume'] = df['TradedVolume'] / df.groupby('metaid')['TradedVolume'].transform('last')
-    df['EndTransactionTime'] = df['TransactionTime']
+    start_t = g['BeginTransactionTime'].transform('first')
+    df['TradedVolume'] = df['EndTransactionTime'] - start_t
 
     metaorders_agg = df.groupby('metaid').agg({
         'sign': 'first',
@@ -124,7 +127,7 @@ def generate_lmf(path, data_dir, start_id=0, include_noise=False):
         'Volume': 'sum',
         'TradedVolume': 'last',
         'DailyVolume': 'first',
-        'TransactionTime': 'first',
+        'BeginTransactionTime': 'first',
         'EndTransactionTime': 'last',
     }).reset_index()
 
@@ -133,16 +136,14 @@ def generate_lmf(path, data_dir, start_id=0, include_noise=False):
 
     metaorders_agg['MetaImpact'] = (metaorders_agg['EndMid'] - metaorders_agg['BeginMid']) \
         * metaorders_agg['sign']
-    metaorders_agg = metaorders_agg.rename(columns={
-        'Volume': 'MetaVolume', 'TransactionTime': 'BeginTransactionTime'
-    })
+    metaorders_agg = metaorders_agg.rename(columns={'Volume': 'MetaVolume'})
     metaorders_agg['Ratio'] = metaorders_agg['MetaImpact'] / np.sqrt(metaorders_agg['MetaVolume'])
 
     return metaorders_agg[OUT_COLUMNS]
 
 
 if __name__ == '__main__':
-    model = 'lmf_1.5_0.3_empirical_tim_0.0_1000'
+    model = 'lmf_emp_tim_param_1.0'
     n_filter = 2              # tiene i metaordini con NbChild >= n_filter
     include_noise = False     # True: i trade di rumore (id -1) diventano metaordini da 1 trade
 

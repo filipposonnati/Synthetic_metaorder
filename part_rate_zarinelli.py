@@ -12,7 +12,7 @@ import os
 # invece che di (Q, pi) come in part_rate.py.
 #   log10(I) = log10(Y) + alpha*log10(pi) + delta*log10(D)
 
-SAMPLE_THRESHOLD_PCT = 0.04   # come in part_rate.py: si tengono i bin con count > 0.1 * max
+SAMPLE_THRESHOLD_PCT = 0.02   # come in part_rate.py: si tengono i bin con count > 0.1 * max
 
 plt.rcParams.update({
     'font.size': 16,
@@ -134,8 +134,23 @@ def _valid_arrays(grouped, mask_significance):
     return grouped, valid, mask
 
 
-def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save_path=None):
-    """Superficie di fit e punti binnati dell'impatto, in funzione di (pi, D)."""
+def fit_label(popt, perr, r2, model_kind):
+    """Testo di legenda con i parametri di best fit (± errore) e R2."""
+    if model_kind == 'linear':
+        return (rf"$\log_{{10}}Y = {popt[0]:.3f} \pm {perr[0]:.3f}$" "\n"
+                rf"$\alpha = {popt[1]:.3f} \pm {perr[1]:.3f}$" "\n"
+                rf"$\delta = {popt[2]:.3f} \pm {perr[2]:.3f}$" "\n"
+                rf"$R^2 = {r2:.4f}$ (log scale)")
+    return (rf"$Y = {popt[0]:.3g} \pm {perr[0]:.2g}$" "\n"
+            rf"$\alpha = {popt[1]:.3f} \pm {perr[1]:.3f}$" "\n"
+            rf"$\delta = {popt[2]:.3f} \pm {perr[2]:.3f}$" "\n"
+            rf"$R^2 = {r2:.4f}$")
+
+
+def _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind,
+                  save_path, show_discarded, show=False):
+    """Superficie di best fit + punti binnati. Se show_discarded=False compaiono
+    solo i punti selezionati per il fit."""
     grouped, valid, mask = _valid_arrays(grouped, mask_significance)
     a = grouped['a_mean'].to_numpy()[valid]
     b = grouped['b_mean'].to_numpy()[valid]
@@ -150,8 +165,10 @@ def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save
     log_yerr = yerr / (b * ln10)
     log_zerr = zerr / (impact * ln10)
 
-    a_s, b_s = np.meshgrid(np.linspace(log_a.min(), log_a.max(), 40),
-                           np.linspace(log_b.min(), log_b.max(), 40))
+    # range della superficie: tutti i punti nel plot completo, solo i selezionati altrimenti
+    ref = np.ones_like(mask, dtype=bool) if show_discarded else mask
+    a_s, b_s = np.meshgrid(np.linspace(log_a[ref].min(), log_a[ref].max(), 40),
+                           np.linspace(log_b[ref].min(), log_b[ref].max(), 40))
     if model_kind == 'linear':
         z_s = popt[0] + popt[1] * a_s + popt[2] * b_s
     else:
@@ -162,7 +179,7 @@ def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save
     ax = fig.add_subplot(111, projection='3d')
     sel, unsel = mask, ~mask
 
-    if np.any(unsel):
+    if show_discarded and np.any(unsel):
         ax.scatter(log_a[unsel], log_b[unsel], log_impact[unsel],
                    s=15, color='gray', alpha=0.25, label='Discarded')
         ax.errorbar(log_a[unsel], log_b[unsel], log_impact[unsel],
@@ -180,15 +197,33 @@ def plot_fit_surface(grouped, mask_significance, popt, model_kind='linear', save
     ax.set_xlabel(r'$\log_{10}(\pi)$', labelpad=10)
     ax.set_ylabel(r'$\log_{10}(D)$', labelpad=10)
     ax.set_zlabel(r'$\log_{10}(I)$', labelpad=20)
-    ax.view_init(elev=25, azim=150)
-    ax.legend(loc='upper left')
+    ax.view_init(elev=25, azim=210)
     ax.tick_params(axis='z', pad=10)
+    if show_discarded:
+        ax.set_zlim([-4, 0])
 
-    ax.set_zlim([-4, 0])
+    handles, _ = ax.get_legend_handles_labels()
+    handles.append(Patch(facecolor='gray', alpha=0.4, label='Best-fit surface'))
+    handles.append(Patch(facecolor='none', edgecolor='none', label=fit_label(popt, perr, r2, model_kind)))
+    ax.legend(handles=handles, loc='upper left')
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
-    plt.show()
+    if show:
+        plt.show()
+    plt.close()
+
+
+def plot_fit_surface(grouped, mask_significance, popt, perr, r2, model_kind='linear', save_path=None):
+    """Superficie di fit con punti selezionati e scartati."""
+    _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind, save_path,
+                  show_discarded=True, show=False)
+
+
+def plot_fit_surface_selected(grouped, mask_significance, popt, perr, r2, model_kind='linear', save_path=None):
+    """Superficie di fit con i soli punti selezionati per il fit."""
+    _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind, save_path,
+                  show_discarded=False, show=True)
 
 
 def plot_count_bars(grouped, mask_significance, save_path=None):
@@ -231,9 +266,12 @@ def plot_count_bars(grouped, mask_significance, save_path=None):
     ax.set_zlabel('Count', labelpad=38, rotation=90)
     ax.tick_params(axis='z', pad=20)
 
+    n_total = int(grouped['sample_count'].sum())
+    n_sel = int(counts[mask].sum())
+    frac = n_sel / n_total if n_total > 0 else np.nan
     legend_elements = [
         Patch(facecolor=[0.85, 0.85, 0.85, 1.0], edgecolor='black', linewidth=0.5, label='Discarded'),
-        Patch(facecolor=cm.viridis(0.5), edgecolor='black', linewidth=0.5, label='Selected')
+        Patch(facecolor=cm.viridis(0.5), edgecolor='black', linewidth=0.5, label=f'Selected ({100 * frac:.1f}%)'),
     ]
     ax.legend(handles=legend_elements, loc='upper left')
 
@@ -242,12 +280,70 @@ def plot_count_bars(grouped, mask_significance, save_path=None):
     plt.close()
 
 
+def plot_impact_volume_curve(df, save_path, label=r'$\pi = 1$'):
+    """Curva I(Q) come in impact_volume_curve.py: binning logaritmico di MetaVolume (51 punti),
+    fit ODR in log-log sui bin con count > 0.5 * max, riferimento sqrt(Q)."""
+    df = df[df['MetaVolume'] > 0]
+    if df.empty:
+        print('Nessun metaordine con part_rate = 1: curva I(Q) non prodotta')
+        return
+    bins = np.logspace(np.log10(df['MetaVolume'].min()), np.log10(df['MetaVolume'].max()), 51)
+    df = df.assign(bin=pd.cut(df['MetaVolume'], bins=bins, include_lowest=True))
+    g = df.groupby('bin', observed=True).agg({
+        'MetaVolume': ['mean', 'std', 'count'],
+        'MetaImpact': ['mean', 'std']
+    }).dropna()
+    g.columns = ['Q_mean', 'Q_std', 'sample_count', 'I_mean', 'I_std']
+    g = g[(g['Q_mean'] > 0) & (g['I_mean'] > 0)]
+    if g.empty:
+        print('Nessun bin valido per la curva I(Q) con part_rate = 1')
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.plot(g['Q_mean'], g['I_mean'], linestyle='', marker='o', markersize=5,
+            color='tab:blue', label=f'Data {label}')
+
+    fit = g[g['sample_count'] > 0.5 * g['sample_count'].max()]
+    if len(fit) > 2:
+        x, y, n = fit['Q_mean'].values, fit['I_mean'].values, fit['sample_count'].values
+        x_sem = np.where(n > 1, fit['Q_std'].values / np.sqrt(n), 1e-8)
+        y_sem = np.where(n > 1, fit['I_std'].values / np.sqrt(n), 1e-8)
+        log_x, log_y = np.log10(x), np.log10(y)
+        sx = np.maximum(x_sem / (x * np.log(10)), 1e-6)
+        sy = np.maximum(y_sem / (y * np.log(10)), 1e-6)
+        out = ODR(RealData(log_x, log_y, sx=sx, sy=sy),
+                  Model(lambda p, t: p[0] * t + p[1]), beta0=[1.0, 0.0]).run()
+        slope, intercept = out.beta
+        slope_err = out.sd_beta[0]
+        pred = slope * log_x + intercept
+        ss_tot = np.sum((log_y - log_y.mean()) ** 2)
+        r2_ = 1.0 - np.sum((log_y - pred) ** 2) / ss_tot if ss_tot > 0 else np.nan
+        print(f'[{label}] Slope: {slope:.4f} +/- {slope_err:.4f} | '
+              f'Intercept: {intercept:.4f} +/- {out.sd_beta[1]:.4f} | R2: {r2_:.4f}')
+        xf = np.logspace(np.log10(x.min()), np.log10(x.max()), 100)
+        ax.plot(xf, (10 ** intercept) * xf ** slope, linestyle='--', linewidth=1.8, color='tab:blue',
+                label=rf"Fit {label}: ${slope:.3f} \pm {slope_err:.3f}$" + '\n' + rf"($R^2 = {r2_:.4f}$)")
+
+    xr = np.logspace(np.log10(g['Q_mean'].min() / 2), np.log10(g['Q_mean'].max() * 2), 100)
+    ax.plot(xr, xr ** 0.5, linestyle='-', color='black', linewidth=1.2, label=r'$\sqrt{Q}$')
+
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel(r'$Q$')
+    ax.set_ylabel(r'$I$')
+    ax.grid(True, which='both', ls='-', alpha=0.2)
+    ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
+
 if __name__ == '__main__':
-    model = 'lmf_1.5_0.3_empirical_tim_0.0_1000'
-    #model = 'tim_0.0_1000'
+    #model = 'lmf_emp_tim_param_0.5'
+    #model = 'tim_0.0'
+    model = ''
 
     DIR = os.path.join('database', f'meta{"" if model == "" else f"_{model}"}')
-    OUT_DIR = os.path.join('images', 'part_rate_zarinelli')
 
     nb_traders = 20
     kind = 'power'
@@ -258,10 +354,18 @@ if __name__ == '__main__':
     else:
         conf = f'{nb_traders}_{kind}_{exp}'
 
+    #conf = 'lmf'
+
     print(model, conf)
+
+    OUT_DIR = os.path.join('images', f'part_rate_zarinelli/{f"{model}_" if model != "" else ""}{conf}')
 
     PATH = f'meta_{conf}.csv'
     MODEL_KIND = 'power_law'   # 'linear' = piano in log-spazio, 'power_law' = spazio originale
+    # True: i metaordini con part_rate = 1 vengono tolti dal fit/plot in (pi, D) e analizzati
+    #       a parte con la curva I(Q) (come impact_volume_curve.py).
+    # False: comportamento originale (tutti i metaordini insieme).
+    REMOVE_FULL_PART_RATE = True
 
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -274,10 +378,19 @@ if __name__ == '__main__':
     df_res['a'] = df_res['MetaVolume'] / df_res['TradedVolume']
     df_res['b'] = df_res['MetaVolume'] / df_res['a']
 
-    grouped, mask_significance = compute_binned_stats(df_res, n_bins=51)
+    prefix = f'{model}_' if model != '' else ''
+    if REMOVE_FULL_PART_RATE:
+        full = np.isclose(df_res['a'], 1.0, rtol=0, atol=1e-9) | (df_res['a'] > 1.0)
+        df_full = df_res[full].copy()
+        df_res = df_res[~full].copy()
+        conf = conf + '_no_pi1'
+        print(f'part_rate = 1: {len(df_full)} metaordini rimossi, {len(df_res)} rimasti')
+        plot_impact_volume_curve(df_full, os.path.join(OUT_DIR, f'{prefix}{conf}_pi1_impact_volume.png'))
+
+    grouped, mask_significance = compute_binned_stats(df_res, n_bins=101)
     selected = grouped.loc[mask_significance]
 
-    plot_histogram_2d(df_res, save_path=os.path.join(OUT_DIR, f'{f"{model}_" if model != "" else ""}{conf}_part_rate_zarinelli_hist.png'))
+    plot_histogram_2d(df_res, save_path=os.path.join(OUT_DIR, f'{f"{model}_" if model != "" else ""}{conf}_hist.png'))
 
     popt, perr, r2 = odr_regression(
         selected['a_mean'].to_numpy(), selected['b_mean'].to_numpy(),
@@ -300,7 +413,9 @@ if __name__ == '__main__':
 
     print(f'R2 (log scale) = {r2:.4f}')
 
-    plot_fit_surface(grouped, mask_significance, popt, model_kind=MODEL_KIND,
-                     save_path=os.path.join(OUT_DIR, f'{f"{model}_" if model != "" else ""}{conf}_part_rate_zarinelli_fit.png'))
+    plot_fit_surface(grouped, mask_significance, popt, perr, r2, model_kind=MODEL_KIND,
+                     save_path=os.path.join(OUT_DIR, f'{prefix}{conf}_fit.png'))
+    plot_fit_surface_selected(grouped, mask_significance, popt, perr, r2, model_kind=MODEL_KIND,
+                              save_path=os.path.join(OUT_DIR, f'{prefix}{conf}_fit_selected.png'))
     plot_count_bars(grouped, mask_significance,
-                    save_path=os.path.join(OUT_DIR, f'{f"{model}_" if model != "" else ""}{conf}_part_rate_zarinelli_counts.png'))
+                    save_path=os.path.join(OUT_DIR, f'{prefix}{conf}_counts.png'))
