@@ -30,13 +30,13 @@ os.makedirs(output_dir, exist_ok=True)
 
 show_q_dist = True  # Flag to display Q distribution on the right axis
 
-#model = 'lmf_1.5_0.3_normal_abs_tim_0.0_1000'
-model = 'var_1000'
+model = 'lmf_emp_tim_param_0.3'
+#model = 'var_1000'
 #model = 'tim_0.0_1000'
 #model = ''
 #model = 'iid_gaussian_tim_parametric_0.3_1000'
 
-algorithm = 'maitrier' # 'maitrier' or lmf
+algorithm = 's' # 'maitrier' or lmf
 
 dir = 'meta'
 if model != "":
@@ -44,8 +44,9 @@ if model != "":
 
 dir_path = os.path.join('database', dir)
 nb_traders = 20
-kind = 'power'
+kind = 'uniform'
 exponent = 2.0
+pareto_exp = 1.5
 
 if algorithm == 'maitrier':
     if nb_traders == 1:
@@ -54,8 +55,14 @@ if algorithm == 'maitrier':
         conf = f'{nb_traders}_{kind}'
     else:
         conf = f'{nb_traders}_{kind}_{exponent}'
+
 if algorithm == 'lmf':
     conf = 'lmf'
+
+if algorithm == 's':
+    conf = f's_{nb_traders}_lmf_{pareto_exp}'
+
+conf = 's_2_hmm_1.5'
 
 path = 'meta_' + conf
 
@@ -265,4 +272,4 @@ else:
 
 plt.savefig(filepath, bbox_inches='tight')
 print(f'Saved single fitted figure to: {filepath}')
-plt.close()
+plt.show()

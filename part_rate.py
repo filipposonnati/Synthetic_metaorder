@@ -4,8 +4,6 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy.odr import ODR, Model, RealData
 import os
-from os import listdir
-import re
 from matplotlib.patches import Patch
 
 def linear_func_odr(p, x):
@@ -157,24 +155,29 @@ def plot_histogram_2d(df, n_hist=51, save_path='images\\part_rate\\part_rate_his
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
-def fit_label(popt, perr, r2, model_kind):
-    """Testo di legenda con i parametri di best fit (± errore) e R2."""
+def fit_label(popt, perr, r2, sse, mse, n_bins, model_kind):
+    """Testo di legenda con i parametri di best fit (± errore), R2, SSE e MSE in log-spazio."""
     if model_kind == 'linear':
         return (rf"$\log_{{10}}Y = {popt[0]:.2f} \pm {perr[0]:.2f}$" "\n"
                 rf"$\delta = {popt[1]:.3f} \pm {perr[1]:.3f}$" "\n"
                 rf"$\alpha = {popt[2]:.3f} \pm {perr[2]:.3f}$" "\n"
-                rf"$R^2 = {r2:.4f}$ (log scale)")
+                rf"$R^2 = {r2:.2g}$ (log scale)" "\n"
+                rf"$SSE = {sse:.2g}$, $MSE = {mse:.2g}$" "\n"
+                rf"$N_{{bins}} = {n_bins}$")
     if model_kind == 'quadratic':
         return (rf"$c = {popt[0]:.2f} \pm {perr[0]:.2f}$" "\n"
                 rf"$b_u = {popt[1]:.3f} \pm {perr[1]:.3f}$, $b_v = {popt[2]:.3f} \pm {perr[2]:.3f}$" "\n"
                 rf"$c_{{uu}} = {popt[3]:.3f} \pm {perr[3]:.3f}$, $c_{{vv}} = {popt[4]:.3f} \pm {perr[4]:.3f}$" "\n"
                 rf"$c_{{uv}} = {popt[5]:.3f} \pm {perr[5]:.3f}$" "\n"
-                rf"$R^2 = {r2:.4f}$ (log scale)")
+                rf"$R^2 = {r2:.4f}$ (log scale)" "\n"
+                rf"$SSE = {sse:.2g}$, $MSE = {mse:.2g}$" "\n"
+                rf"$N_{{bins}} = {n_bins}$")
     return (rf"$Y = {popt[0]:.2f} \pm {perr[0]:.2f}$" "\n"
             rf"$\delta = {popt[1]:.3f} \pm {perr[1]:.3f}$" "\n"
             rf"$\alpha = {popt[2]:.3f} \pm {perr[2]:.3f}$" "\n"
-            rf"$R^2 = {r2:.2f}$")
-
+            rf"$R^2 = {r2:.2g}$" "\n"
+            rf"$SSE = {sse:.2g}$, $MSE = {mse:.2g}$" "\n"
+            rf"$N_{{bins}} = {n_bins}$")
 
 def _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind,
                   save_path, show_discarded, show=False):
@@ -209,6 +212,20 @@ def _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind,
     log_yerr = yerr / (b * ln10)
     log_zerr = zerr / (impact * ln10)
 
+    # Calcolo di SSE e MSE sui logaritmi limitatamente ai punti selezionati (usati per il fit)
+    sel = mask
+    n_bins = int(np.sum(sel))
+    if model_kind == 'linear':
+        log_pred_sel = popt[0] + popt[1] * log_a[sel] + popt[2] * log_b[sel]
+    elif model_kind == 'quadratic':
+        log_pred_sel = (popt[0] + popt[1] * log_a[sel] + popt[2] * log_b[sel]
+                        + popt[3] * log_a[sel]**2 + popt[4] * log_b[sel]**2 + popt[5] * log_a[sel] * log_b[sel])
+    else:
+        log_pred_sel = np.log10(popt[0] * (10**log_a[sel])**popt[1] * (10**log_b[sel])**popt[2])
+
+    sse = np.sum((log_impact[sel] - log_pred_sel)**2)
+    mse = np.mean((log_impact[sel] - log_pred_sel)**2)
+
     # range della superficie: tutti i punti nel plot completo, solo i selezionati altrimenti
     ref = np.ones_like(mask, dtype=bool) if show_discarded else mask
     a_s, b_s = np.meshgrid(np.linspace(log_a[ref].min(), log_a[ref].max(), 40),
@@ -226,7 +243,6 @@ def _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind,
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
 
-    sel = mask
     unsel = ~mask
 
     # Punti non selezionati (grigi e trasparenti)
@@ -255,8 +271,9 @@ def _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind,
 
     handles, _ = ax.get_legend_handles_labels()
     handles.append(Patch(facecolor='gray', alpha=0.4, label='Best-fit surface'))
-    handles.append(Patch(facecolor='none', edgecolor='none', label=fit_label(popt, perr, r2, model_kind)))
-    ax.legend(handles=handles, loc='upper left')
+    handles.append(Patch(facecolor='none', edgecolor='none', label=fit_label(popt, perr, r2, sse, mse, n_bins, model_kind)))
+    legend = ax.legend(handles=handles, loc='upper left')
+    legend.set_zorder(100)
 
     ax.tick_params(axis='z', pad=10)
 
@@ -266,13 +283,11 @@ def _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind,
         plt.show()
     plt.close()
 
-
 def plot_fit_surface(grouped, mask_significance, popt, perr, r2, model_kind='linear',
                      save_path='images\\part_rate\\part_rate_fit.png'):
     """Figura 1: superficie di fit con bin selezionati e scartati."""
     _plot_surface(grouped, mask_significance, popt, perr, r2, model_kind, save_path,
                   show_discarded=True, show=True)
-
 
 def plot_fit_surface_selected(grouped, mask_significance, popt, perr, r2, model_kind='linear',
                               save_path='images\\part_rate\\part_rate_fit_selected.png'):
@@ -304,7 +319,6 @@ def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\pa
     elev, azim = 25, 245
 
     fig = plt.figure(figsize=(10, 8))
-    # computed_zorder=False: matplotlib rispetta l'ordine di disegno che decidiamo noi
     ax = fig.add_subplot(111, projection='3d', computed_zorder=False)
     ax.view_init(elev=elev, azim=azim)
 
@@ -318,14 +332,11 @@ def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\pa
         norm = plt.Normalize(vmin=counts[mask].min(), vmax=counts[mask].max())
         rgba_colors[mask] = cm.viridis(norm(counts[mask].astype(float)))
 
-    # Ordinamento back-to-front: distanza lungo la direzione della camera
     az, el = np.deg2rad(azim), np.deg2rad(elev)
     cam_dir = np.array([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az)])
-    # profondità = proiezione sul vettore camera (più grande = più vicino alla camera)
     depth = log_a * cam_dir[0] + log_b * cam_dir[1]
-    order = np.argsort(depth)          # prima le più lontane, ultime le più vicine
+    order = np.argsort(depth)
 
-    # Una chiamata a bar3d per barra, in ordine, così l'ordine di disegno è rispettato
     for i in order:
         ax.bar3d(log_a[i] - dx / 2, log_b[i] - dy / 2, z_floor,
                  dx, dy, float(counts[i]),
@@ -339,7 +350,6 @@ def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\pa
 
     ax.tick_params(axis='z', pad=20)
 
-    # frazione di PUNTI (non di bin) usata per il fit
     n_total = int(grouped['sample_count'].sum())
     n_sel = int(counts[mask].sum())
     frac = n_sel / n_total if n_total > 0 else np.nan
@@ -347,7 +357,8 @@ def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\pa
         Patch(facecolor=[0.85, 0.85, 0.85, 1.0], edgecolor='black', linewidth=0.5, label='Discarded'),
         Patch(facecolor=cm.viridis(0.5), edgecolor='black', linewidth=0.5, label=f'Selected, thr = {THRESHOLD} ({100 * frac:.1f}%)')
     ]
-    ax.legend(handles=legend_elements, loc='upper left')
+    legend = ax.legend(handles=legend_elements, loc='upper left')
+    legend.set_zorder(100)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
@@ -356,11 +367,6 @@ def plot_count_bars(grouped, mask_significance, save_path='images\\part_rate\\pa
 def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1, 
                                   save_path='images/part_rate/impact_volume_deciles.png',
                                   dist_save_path=None):
-    """
-    Replica esattamente la logica di impact_volume_curve.py per il caricamento e i filtri,
-    aggiungendo la suddivisione in decili del Participation Rate e la curva All Data.
-    Inoltre, genera la figura dedicata alla distribuzione del Participation Rate divisa in decili.
-    """
     plt.rcParams.update({
         'font.size': 12,
         'axes.titlesize': 18,
@@ -370,7 +376,6 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
         'legend.fontsize': 11
     })
 
-    # 1. Caricamento del file esattamente come in impact_volume_curve.py
     if os.path.exists(os.path.join(dir_path, path + '_' + str(min_nb_child) + '.csv')):
         data_path = os.path.join(dir_path, path + '_' + str(min_nb_child) + '.csv')
     else:
@@ -382,21 +387,16 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
         parse_dates=['BeginTime', 'EndTime']
     )
 
-    # 2. Filtri identici a impact_volume_curve.py
     synthetic_meta = synthetic_meta[synthetic_meta['MetaVolume'] > 0]
     df_res = synthetic_meta[['MetaVolume', 'DailyVolume', 'TradedVolume', 'NbChild', 'MetaImpact']].copy()
-    
-    # Applicazione del filtro su NbChild (uguale a cfg['min_val'] con op '>')
     df_res = df_res[df_res['NbChild'] > min_nb_child]
 
     if df_res.empty:
         print("Nessun dato valido disponibile.")
         return
 
-    # Calcolo del Participation Rate
     df_res['ParticipationRate'] = df_res['MetaVolume'] / df_res['TradedVolume']
 
-    # 3. Creazione dei decili (gestendo eventuali inf/nan solo per il qcut dei decili)
     df_valid_pr = df_res.replace([np.inf, -np.inf], np.nan).dropna(subset=['ParticipationRate'])
     df_valid_pr = df_valid_pr[df_valid_pr['ParticipationRate'] > 0]
 
@@ -409,7 +409,6 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     actual_deciles = sorted(df_valid_pr['decile'].unique())
     cmap = plt.get_cmap('tab10', len(actual_deciles))
 
-    # --- Generazione della figura della distribuzione del Participation Rate in decili ---
     if dist_save_path is None:
         dist_save_path = save_path.replace('impact_volume_deciles', 'part_rate_deciles_dist')
 
@@ -433,7 +432,6 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     ax_dist.set_xscale('log')
     ax_dist.set_xlabel(r'$\phi = V / V_P$')
     ax_dist.set_ylabel('Count')
-    #ax_dist.set_title('Distribution Splitting')
     ax_dist.grid(True, which='both', ls='--', alpha=0.3)
     ax_dist.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
 
@@ -442,14 +440,12 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     fig_dist.savefig(dist_save_path, dpi=300, bbox_inches='tight')
     print(f"Grafico della distribuzione dei decili salvato in: {dist_save_path}")
     plt.close(fig_dist)
-    # --------------------------------------------------------------------------------------------
 
     fig, ax1 = plt.subplots(figsize=(11, 7))
 
     all_x_min = []
     all_x_max = []
 
-    # Funzione interna di binning e fit ODR (identica a impact_volume_curve.py)
     def process_and_fit(sub_df):
         min_vol = sub_df['MetaVolume'].min()
         max_vol = sub_df['MetaVolume'].max()
@@ -472,7 +468,6 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
         x_data = grouped['Q_mean'].values
         y_data = grouped['I_mean'].values
 
-        # Soglia a 0.5 * max_samples (come in impact_volume_curve.py)
         max_samples = grouped['sample_count'].max()
         grouped_fit = grouped[grouped['sample_count'] > 0.5 * max_samples].copy()
 
@@ -497,7 +492,6 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
             model_odr = Model(linear_func)
             data_odr = RealData(log_x, log_y, sx=sigma_log_x, sy=sigma_log_y)
             
-            # beta0 = [1.0, 0.0] come in impact_volume_curve.py
             odr = ODR(data_odr, model_odr, beta0=[1.0, 0.0])
             out = odr.run()
 
@@ -507,25 +501,20 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
             x_fit = np.logspace(np.log10(x_fit_data.min()), np.log10(x_fit_data.max()), 100)
             y_fit = (10**intercept) * (x_fit**slope)
 
-            # Calcolo di R^2 in log-spazio
             pred_log = intercept + slope * log_x
             ss_tot = np.sum((log_y - np.mean(log_y))**2)
             ss_res = np.sum((log_y - pred_log)**2)
             r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else np.nan
             
-            # Restituiamo anche r2
             fit_res = (x_fit, y_fit, slope, slope_err, r2)
 
         return (x_data, y_data), fit_res
 
-    # 1. PLOT DEI SINGOLI DECILI
     for i, d in enumerate(actual_deciles):
         sub_df = df_valid_pr[df_valid_pr['decile'] == d]
         if sub_df.empty:
             continue
 
-        eta_min = sub_df['ParticipationRate'].min()
-        eta_max = sub_df['ParticipationRate'].max()
         color = cmap(i)
         label_str = f'D{d+1}'
 
@@ -546,7 +535,6 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
                 label=f"{label_str}: ${slope:.3f} \\pm {slope_err:.3f}$ ($R^2={r2:.2f}$)"
             )
 
-    # 2. PLOT DATI COMPLETI ("All Data" usando l'intero df_res filtrato come in impact_volume_curve.py)
     data_pts_all, fit_res_all = process_and_fit(df_res)
     if data_pts_all is not None:
         x_data_all, y_data_all = data_pts_all
@@ -562,16 +550,12 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
                 label=f"All Data ${slope_all:.3f} \\pm {slope_err_all:.3f}$"
             )
 
-    # 3. CURVA DI RIFERIMENTO TEORICA (sqrt(Q))
     if all_x_min and all_x_max:
         global_x_min = min(all_x_min)
         global_x_max = max(all_x_max)
         x_ref = np.logspace(np.log10(global_x_min), np.log10(global_x_max), 100)
         y_ref = x_ref**0.5
         ax1.plot(x_ref, y_ref, linestyle='-', color='black', linewidth=1.2, label=r'$\sqrt{Q}$')
-
-    ax1.set_ylim([1e-3, 1e-1])
-    ax1.set_xlim([1e-6, 1e-2])
 
     ax1.set_xscale('log')
     ax1.set_yscale('log')
@@ -580,6 +564,9 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     ax1.grid(True, which="both", ls="-", alpha=0.2)
     ax1.legend(loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
 
+    ax1.set_xlim([1e-6, 1e-2])
+    ax1.set_ylim([1e-3, 1e-1])
+
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -587,17 +574,17 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
     plt.close()
 
 if __name__ == '__main__':
-    #model = 'tim_0.0'
-    model = 'lmf_emp_tim_param_0.3'
-    #model = ''
+    model = ''
+    model = 'lmf_emp_tim_0.1'
 
     DIR = os.path.join('database', f'meta{"" if model == "" else f"_{model}"}')
 
-    nb_traders = 20
+    nb_traders = 4
     kind = 'power'
     exp = '2.0'
+    pareto_exp = 1.5
 
-    algorithm = 'lmf'      # 'maitrier' | 'lmf'
+    algorithm = 'lmf'
 
     if algorithm == 'maitrier':
         if kind == 'uniform':
@@ -607,23 +594,18 @@ if __name__ == '__main__':
     elif algorithm == 'lmf':
         conf = 'lmf'
 
-    print(model, conf)
+    #conf = 's_2_hmm_1.2'
 
-    if algorithm == "lmf" or kind == "power":
-        THRESHOLD = 0.01
-    elif algorithm == "maitrier" and kind == "uniform":
-        THRESHOLD = 0.1
+    print(conf, model)
+
+    THRESHOLD = 0.01
 
     path = 'meta_' + conf
     PATH = f'meta_{conf}.csv'
 
-    dir_path = os.path.join('database', f'meta{f"_{model}" if model != "" else ""}') # o 'database\meta'
+    dir_path = os.path.join('database', f'meta{f"_{model}" if model != "" else ""}')
 
-    # 'linear'    : piano in log-space: log10(I) = log10(Y) + delta*log10(a) + alpha*log10(b)
-    # 'quadratic' : superficie quadratica in log-space (u = log10(a), v = log10(b)):
-    #               log10(I) = c + b_u*u + b_v*v + c_uu*u^2 + c_vv*v^2 + c_uv*u*v
-    # 'power_law' : legge di potenza nello spazio originale
-    MODEL_KIND = 'linear'
+    MODEL_KIND = 'power_law'
     synthetic_meta = pd.read_csv(
         f'{DIR}\\{PATH}', sep=',', parse_dates=['BeginTime', 'EndTime']
     )
@@ -648,6 +630,20 @@ if __name__ == '__main__':
     plot_histogram_2d(df_res, save_path=f'images\\part_rate\\{prefix}{conf}\\hist.png')
     popt, perr, r2 = odr_regression(a_f, b_f, i_f, zerr_f, xerr_f, yerr_f, model_kind=MODEL_KIND)
     
+    # Calcolo aggiuntivo di SSE e MSE a terminale
+    log_a_f = np.log10(a_f)
+    log_b_f = np.log10(b_f)
+    log_i_f = np.log10(i_f)
+    if MODEL_KIND == 'linear':
+        log_pred_f = popt[0] + popt[1] * log_a_f + popt[2] * log_b_f
+    elif MODEL_KIND == 'quadratic':
+        log_pred_f = (popt[0] + popt[1] * log_a_f + popt[2] * log_b_f
+                      + popt[3] * log_a_f**2 + popt[4] * log_b_f**2 + popt[5] * log_a_f * log_b_f)
+    else:
+        log_pred_f = np.log10(popt[0] * (10**log_a_f)**popt[1] * (10**log_b_f)**popt[2])
+    sse_val = np.sum((log_i_f - log_pred_f)**2)
+    mse_val = np.mean((log_i_f - log_pred_f)**2)
+
     if MODEL_KIND == 'linear':
         logY_val, delta_val, alpha_val = popt
         logY_err, delta_err, alpha_err = perr
@@ -663,7 +659,10 @@ if __name__ == '__main__':
         for name, val, err in zip(('Y', 'delta', 'alpha'), popt, perr):
             print(f'{name}={val:.6g} +/- {err:.3g}')
             
-    print(f'R2 (log scale)={r2:.4f}')
+    print(f'R2 (log scale)={r2:.2g}')
+    print(f'SSE (log scale)={sse_val:.2g}')
+    print(f'MSE (log scale)={mse_val:.2g}')
+    print(f'Number of bins={len(a_f)}')
 
     # Figura 1: Superficie di fit e punti dell'intensità
     plot_fit_surface(grouped, mask_significance, popt, perr, r2, model_kind=MODEL_KIND,

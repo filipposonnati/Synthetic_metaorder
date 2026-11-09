@@ -143,7 +143,7 @@ def generate_lmf(path, data_dir, start_id=0, include_noise=False):
 
 
 if __name__ == '__main__':
-    model = 'lmf_emp_tim_param_1.0'
+    model = 'lmf_emp_tim_0.1'
     n_filter = 2              # tiene i metaordini con NbChild >= n_filter
     include_noise = False     # True: i trade di rumore (id -1) diventano metaordini da 1 trade
 

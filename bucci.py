@@ -56,10 +56,15 @@ def configs_from_dir(directory, skip=('meta_1.csv',), **kwargs):
 
 def plot_bucci(configurations: Sequence[BucciConfig],
                save_path='images/part_rate/bucci.png',
-               xlim=(1e-3, 1.2), ylim=(2e-1, 1e1), show=False):
+               xlim=(1e-3, 1.2), ylim=(2e-1, 1e1), show=False,
+               diagnose=True, diagnose_rows=12, show_hidden=True):
     """
     Per ogni configurazione: curva I(Q)/sqrt(Q) in funzione del participation rate
     pi = Q/Q_P (pannello alto) e istogramma di pi (pannello basso).
+
+    diagnose    : stampa, per ogni set, i bin non disegnati (media, errore, n campioni)
+    show_hidden : segna con una 'x' sul bordo inferiore i bin con media <= ylim[0]
+                  (media negativa o sotto l'asse), cosi' si vede che esistono
     """
     if not configurations:
         raise ValueError('configurations is empty')
@@ -88,7 +93,7 @@ def plot_bucci(configurations: Sequence[BucciConfig],
 
         df_res['Ratio'] = df_res['MetaImpact'] / np.sqrt(df_res['MetaVolume'])
         df_res['ParticipationRate'] = df_res['MetaVolume'] / df_res['TradedVolume']
-        df_res = df_res.replace([np.inf, -np.inf], np.nan).dropna(subset=['Ratio', 'ParticipationRate'])
+        #df_res = df_res.replace([np.inf, -np.inf], np.nan).dropna(subset=['Ratio', 'ParticipationRate'])
         df_res = df_res[df_res['ParticipationRate'] > 0]
         if df_res.empty:
             print(f'[plot_bucci] nessun dato valido per "{cfg.label}" ({cfg.path}), saltato')
@@ -106,16 +111,55 @@ def plot_bucci(configurations: Sequence[BucciConfig],
         df_res['bin'] = pd.cut(df_res['ParticipationRate'], bins=bins, include_lowest=True)
         grouped = df_res.groupby('bin', observed=True).agg({
             'ParticipationRate': ['mean', 'std'],
-            'Ratio': ['mean', 'std', 'count']
-        }).dropna()
-        grouped.columns = ['PR_mean', 'PR_std', 'Ratio_mean', 'Ratio_std', 'sample_count']
+            'Ratio': ['mean', 'std', 'count'],
+            'MetaImpact': ['mean'],
+            'MetaVolume': ['mean']
+        })
+
+        grouped = grouped.dropna(subset=[('ParticipationRate', 'mean'), ('Ratio', 'mean')])
+
+        grouped.columns = ['PR_mean', 'PR_std', 'Ratio_mean', 'Ratio_std', 'sample_count',
+                           'I_mean', 'Q_mean']
 
         sqrt_n = np.sqrt(grouped['sample_count'].to_numpy())
-        ax_main.errorbar(grouped['PR_mean'].to_numpy(), grouped['Ratio_mean'].to_numpy(),
-                         yerr=grouped['Ratio_std'].to_numpy() / sqrt_n,
-                         xerr=grouped['PR_std'].to_numpy() / sqrt_n,
+        grouped['Ratio_sem'] = grouped['Ratio_std'].fillna(0.0).to_numpy() / sqrt_n
+        grouped['PR_sem'] = grouped['PR_std'].fillna(0.0).to_numpy() / sqrt_n
+
+        # Un punto e' visibile solo se la media e' sopra il limite inferiore dell'asse log:
+        # medie <= 0 (o < ylim[0]) non si possono disegnare, ma il bin esiste.
+        visible = grouped['Ratio_mean'] > ylim[0]
+        hidden = grouped[~visible]
+
+        if diagnose:
+            n_neg = int((hidden['Ratio_mean'] <= 0).sum())
+            print(f'[{cfg.label}] bin non vuoti: {len(grouped)} | non visibili: {len(hidden)} '
+                  f'(media<=0: {n_neg}, 0<media<={ylim[0]:g}: {len(hidden) - n_neg}) | '
+                  f'campioni nei bin non visibili: {int(hidden["sample_count"].sum())}')
+            if len(hidden):
+                h = hidden.copy()
+                h['mean/sem'] = h['Ratio_mean'] / h['Ratio_sem'].replace(0, np.nan)
+                # I_mean, Q_mean: se I_mean e' ~costante al variare di Q_mean il contributo negativo
+                # e' un offset indipendente da Q; se scala come sqrt(Q) e' un impatto negativo.
+                cols = ['PR_mean', 'Ratio_mean', 'Ratio_sem', 'mean/sem', 'I_mean', 'Q_mean',
+                        'sample_count']
+                # prima i bin con piu' campioni (sono i piu' informativi), poi per PR crescente
+                top = h.sort_values('sample_count', ascending=False).head(diagnose_rows)
+                print(top[cols].sort_values('PR_mean').to_string(
+                    index=False, float_format=lambda v: f'{v:.3e}'))
+
+        vis = grouped[visible]
+        ax_main.errorbar(vis['PR_mean'].to_numpy(), vis['Ratio_mean'].to_numpy(),
+                         yerr=[np.minimum(vis['Ratio_sem'], 0.99 * vis['Ratio_mean']).to_numpy(),
+                               vis['Ratio_sem'].to_numpy()],
+                         xerr=vis['PR_sem'].to_numpy(),
                          linestyle='', marker=cfg.marker, color=color, alpha=cfg.alpha,
                          label=cfg.label)
+
+        if show_hidden and len(hidden):
+            ax_main.plot(hidden['PR_mean'].to_numpy(),
+                         np.full(len(hidden), ylim[0] * 1.6),
+                         linestyle='', marker='x', markersize=4, color=color,
+                         alpha=0.6 * cfg.alpha)
 
     ax_main.set_xscale('log')
     ax_main.set_yscale('log')
@@ -123,7 +167,7 @@ def plot_bucci(configurations: Sequence[BucciConfig],
     ax_main.set_ylim(*ylim)
     ax_main.set_ylabel(r'$I(Q) / \sqrt{Q}$')
     ax_main.grid(True, which='both', ls='-')
-    ax_main.legend(loc='upper right', bbox_to_anchor=(0.99, 0.99), borderaxespad=0)
+    ax_main.legend(loc='upper left', bbox_to_anchor=(1.01, 0.99), borderaxespad=0)
     plt.setp(ax_main.get_xticklabels(), visible=False)
 
     ax_hist.set_xscale('log')
@@ -166,15 +210,6 @@ if __name__ == '__main__':
     # Opzione 2: elenco esplicito, anche da cartelle diverse e con opzioni per set.
     """
     configurations = [
-        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_lmf.csv', label='lmf emp tim param 0.3 lmf'),
-        BucciConfig(path='database/meta_lmf_emp_tim_param_0.5/meta_lmf.csv', label='lmf emp tim param 0.5 lmf'),
-        BucciConfig(path='database/meta_lmf_emp_tim_param_1.0/meta_lmf.csv', label='lmf emp tim param 1.0 lmf'),
-    ]
-
-    plot_bucci(configurations, save_path=os.path.join('images', 'bucci', f'lmf_tim_emp_param_lmf.png'))
-    """
-
-    configurations = [
         BucciConfig(path='database/meta/meta_20_power_2.0.csv', label='real data 20 power 2.0'),
         BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_20_power_2.0.csv', label='lmf emp tim param 0.3 20 power 2.0'),
         BucciConfig(path='database/meta_lmf_emp_tim_0.0/meta_20_power_2.0.csv', label='lmf emp tim 0.0 20 power 2.0'),
@@ -184,3 +219,44 @@ if __name__ == '__main__':
     ]
 
     plot_bucci(configurations, save_path=os.path.join('images', 'bucci', f'maitrier.png'))
+    """
+
+    """
+    configurations = [
+        BucciConfig(path='database/meta_lmf_emp_tim_0.0/meta_lmf.csv', label='lmf emp tim 0.0 lmf'),
+        BucciConfig(path='database/meta_lmf_emp_tim_0.3/meta_lmf.csv', label='lmf emp tim 0.3 lmf'),
+        BucciConfig(path='database/meta_lmf_emp_tim_0.5/meta_lmf.csv', label='lmf emp tim 0.5 lmf'),
+        BucciConfig(path='database/meta_lmf_emp_tim_1.0/meta_lmf.csv', label='lmf emp tim 1.0 lmf'),
+    ]
+
+    plot_bucci(configurations, save_path=os.path.join('images', 'bucci', f'lmf_emp_tim_lmf.png'))
+
+    configurations = [
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.0/meta_lmf.csv', label='lmf emp tim param 0.0 lmf'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_lmf.csv', label='lmf emp tim param 0.3 lmf'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.5/meta_lmf.csv', label='lmf emp tim param 0.5 lmf'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_1.0/meta_lmf.csv', label='lmf emp tim param 1.0 lmf'),
+    ]
+
+    plot_bucci(configurations, save_path=os.path.join('images', 'bucci', f'lmf_emp_tim_param_lmf.png'))
+    """
+
+    configurations = [
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_s_3_hmm_1.5.csv', label=r'$N = 3, \alpha = 1.5 $'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_s_2_hmm_1.5.csv', label=r'$N = 2, \alpha = 1.5 $'),
+        #BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_s_3_hmmP10_1.5.csv', label = 'inv hmm pareto'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_s_lam0.2_hmmL_1.5.csv', label=r'$\lambda =  0.2, \alpha = 1.5$'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_s_lam0.2_hmmL_1.2.csv', label=r'$\lambda =  0.2, \alpha = 1.2$'),
+        BucciConfig(path='database/meta_lmf_emp_tim_param_0.3/meta_s_truth.csv', label='LMF meta-orders'),
+    ]
+
+    plot_bucci(configurations, save_path=os.path.join('images', 'bucci', f's_hmm_lmf.png'), xlim=(1e-2, 1.2), ylim=(2e-1, 2), show_hidden=False)
+
+    configurations = [
+        BucciConfig(path='database/meta/meta_s_3_hmm_1.5.csv', label=r'$N = 3, \alpha = 1.5 $'),
+        BucciConfig(path='database/meta/meta_s_2_hmm_1.5.csv', label=r'$N = 2, \alpha = 1.5 $'),
+        #BucciConfig(path='database/meta/meta_s_3_hmmP10_1.5.csv', label='inversion 3 hmm pareto 1.5'),
+        BucciConfig(path='database/meta/meta_s_lam0.3_hmmL_1.2.csv', label=r'$\lambda = 0.3, \alpha = 1.2$'),
+    ]
+
+    plot_bucci(configurations, save_path=os.path.join('images', 'bucci', f's_hmm.png'), xlim=(1e-2, 1.2), ylim=(4e-1, 2), show_hidden=False)

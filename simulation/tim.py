@@ -680,10 +680,10 @@ if __name__ == '__main__':
     paths = np.array(sorted(listdir('..\\database\\data')))   # sorted -> chronological order
 
     p = 1000
-    delta = 0.0
+    delta = 0.1
     fitting_window = 200          # number of trading days used for the fit
     bootstrap_residuals = True
-    joint_bootstrap = False
+    joint_bootstrap = True
 
     trim_top = True        # <-- flag: False restores the original behaviour
     top_frac = 0.05        # fraction of largest |volume| trades dropped each day
@@ -738,6 +738,8 @@ if __name__ == '__main__':
                                     "n_test_days": len(test_paths)})
     else:
         print('No days left for out-of-sample evaluation')
+
+    exit()
 
     clear_data(name)
 
