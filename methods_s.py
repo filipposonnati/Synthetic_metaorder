@@ -27,6 +27,16 @@ MODELLI
                      (segno +-1 a caso), un metaordine attivo a caso viene eseguito e termina
                      con prob. r = 1/zeta(pareto_exp). Stato nascosto: (n_plus, n_minus) con
                      n_plus + n_minus <= max_pool. Lunghezze geometriche.
+  mode='mcmc'        ricostruzione per "linking": ogni trade sceglie un predecessore dello stesso
+                     segno (o nessuno) e le catene sono i metaordini. Modello con normalizzazione:
+                     al passo t viene eseguito un metaordine aperto (peso lam(eta'), eta' = trade
+                     dall'ultimo figlio) o uno nuovo (peso nu[n], n = n. di metaordini aperti);
+                     lunghezza Pareto(pareto_exp) FISSATA. lam(eta') e nu[n] sono nonparametrici,
+                     appresi dai dati (EM stocastico + MCMC Metropolis-Hastings con mosse di
+                     ri-collegamento e scambio di predecessori; accelerato con numba). Non c'e' un
+                     N fisso: la densita' di metaordini attivi e' implicita in lam e nu.
+                     Con la lunghezza libera scala delle lunghezze e densita' non sono identificabili
+                     dai soli segni, quindi pareto_exp va fissato.
   mode='truth'       id veri dei metaordini (5a colonna dei file di lmf_synthetic_market con
                      save_meta_ids=True), come riferimento.
 
@@ -417,12 +427,629 @@ def _assign_hmm(signs, day_codes, mode, alpha, n_types, N_list, eps_list, lam_li
     return trader_out, meta_out, noise_out
 
 
+try:
+    from numba import njit
+except ImportError:                                   # fallback: pura Python (molto lento)
+    def njit(*args, **kwargs):
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]
+        return lambda f: f
+
+LOG2 = 0.6931471805599453
+
+
+# ============================================================================
+# MCMC sulle catene di trade ("linking")
+# ----------------------------------------------------------------------------
+# Stato: pred[i] = predecessore del trade i (stesso segno, a distanza <= K) oppure -1
+# (il trade apre un nuovo metaordine); ogni trade ha al piu' un successore.
+# Le catene sono i metaordini.
+#
+# Modello (proprio, con normalizzazione): al passo t viene eseguito o un metaordine
+# aperto (peso lam(eta'), eta' = t - ultimo figlio) o un metaordine nuovo (peso nu[n],
+# n = n. di metaordini aperti); il segno osservato e' quello del metaordine eseguito
+# (un nuovo metaordine ha segno +-1 con prob. 1/2). Un metaordine e' "aperto" tra un
+# figlio e il successivo. Lunghezza L con pmf f(L). Joint di segni e partizione:
+#
+#   P = prod_t [ w_t / Z_t ] * prod_catene f(L),   Z_t = nu[n_t] + sum_{j aperti} lam(t-j)
+#   w_t = lam(t - pred[t])   se pred[t] >= 0,   nu[n_t] / 2   altrimenti
+# ============================================================================
+
+
+@njit(cache=True)
+def _seed(s):
+    np.random.seed(s)
+
+
+@njit(cache=True)
+def _link(a, b, sgn, cnt, S, lam):
+    """Aggiunge (sgn=+1) o toglie (sgn=-1) il metaordine aperto tra a e b: t in (a, b]."""
+    for t in range(a + 1, b + 1):
+        cnt[t] += sgn
+        S[t] += sgn * lam[t - a]
+
+
+@njit(cache=True)
+def _term(t, pred, cnt, S, loglam, nu, lognu, NMAX):
+    c = cnt[t]
+    if c > NMAX:
+        c = NMAX
+    z = nu[c] + S[t]
+    if z < 1e-300:
+        z = 1e-300
+    if pred[t] >= 0:
+        num = loglam[t - pred[t]]
+    else:
+        num = lognu[c] - LOG2
+    return num - np.log(z)
+
+
+@njit(cache=True)
+def _chains_logf(x0, x1, x2, x3, pred, succ, logf, LMAX):
+    hs = np.empty(4, np.int64)
+    nh = 0
+    total = 0.0
+    for q in range(4):
+        if q == 0:
+            x = x0
+        elif q == 1:
+            x = x1
+        elif q == 2:
+            x = x2
+        else:
+            x = x3
+        if x < 0:
+            continue
+        h = x
+        while pred[h] >= 0:
+            h = pred[h]
+        dup = False
+        for k in range(nh):
+            if hs[k] == h:
+                dup = True
+        if dup:
+            continue
+        hs[nh] = h
+        nh += 1
+        n = 1
+        y = h
+        while succ[y] >= 0:
+            y = succ[y]
+            n += 1
+        if n > LMAX:
+            n = LMAX
+        total += logf[n]
+    return total
+
+
+@njit(cache=True)
+def _init_state(pred, K, lam):
+    T = len(pred)
+    succ = np.full(T, -1, np.int64)
+    cnt = np.zeros(T, np.int64)
+    S = np.zeros(T)
+    for i in range(T):
+        p = pred[i]
+        if p >= 0:
+            succ[p] = i
+            _link(p, i, 1, cnt, S, lam)
+    return succ, cnt, S
+
+
+@njit(cache=True)
+def _total_loglik(pred, succ, cnt, S, loglam, nu, lognu, NMAX, logf, LMAX):
+    T = len(pred)
+    tot = 0.0
+    for t in range(T):
+        tot += _term(t, pred, cnt, S, loglam, nu, lognu, NMAX)
+        if pred[t] < 0:
+            n = 1
+            y = t
+            while succ[y] >= 0:
+                y = succ[y]
+                n += 1
+            if n > LMAX:
+                n = LMAX
+            tot += logf[n]
+    return tot
+
+
+@njit(cache=True)
+def _sign_index(sign, K):
+    """Indici per proporre candidati dello stesso segno: sp = posizioni dei trade + seguite da
+    quelle dei trade -; gidx[i] = posizione di i in sp; mwin[i] = n. di trade dello stesso segno
+    in [i-K, i-1]."""
+    T = len(sign)
+    npl = 0
+    for t in range(T):
+        if sign[t] > 0:
+            npl += 1
+    sp = np.empty(T, np.int64)
+    gidx = np.empty(T, np.int64)
+    mwin = np.zeros(T, np.int64)
+    a = 0
+    b = npl
+    for t in range(T):
+        if sign[t] > 0:
+            sp[a] = t
+            gidx[t] = a
+            a += 1
+        else:
+            sp[b] = t
+            gidx[t] = b
+            b += 1
+    for t in range(T):
+        g = gidx[t]
+        lo = g
+        base = 0 if sign[t] > 0 else npl
+        while lo - 1 >= base and sp[lo - 1] >= t - K:
+            lo -= 1
+        mwin[t] = g - lo
+    return sp, gidx, mwin
+
+
+@njit(cache=True)
+def _logq_rank(r, m, rho, p_new):
+    """log prob. di proporre il r-esimo trade dello stesso segno precedente (r = 1..m),
+    geometrica troncata con parametro rho; con prob. p_new si propone invece -1."""
+    return np.log(1.0 - p_new) + np.log(rho) + (r - 1) * np.log(1.0 - rho) - np.log(1.0 - (1.0 - rho) ** m)
+
+
+@njit(cache=True)
+def _sweep(sign, pred, succ, cnt, S, K, lam, loglam, nu, lognu, NMAX, logf, LMAX, p_new, n_moves,
+           sp, gidx, mwin, rho, beta):
+    """n_moves proposte Metropolis-Hastings di ri-collegamento (temperatura inversa beta).
+    Ritorna (accettate, delta log P)."""
+    T = len(sign)
+    acc = 0
+    dsum = 0.0
+    if T < 2:
+        return acc, dsum
+    lpn = np.log(p_new)
+    for _m in range(n_moves):
+        i = np.random.randint(1, T)
+        m = mwin[i]
+        if m == 0:
+            continue
+        if np.random.random() < p_new:
+            jn = -1
+            logq_new = lpn
+            r_new = 0
+        else:
+            # r ~ geometrica troncata su 1..m (inversione)
+            u = np.random.random()
+            r_new = 1 + int(np.floor(np.log(1.0 - u * (1.0 - (1.0 - rho) ** m)) / np.log(1.0 - rho)))
+            if r_new > m:
+                r_new = m
+            if r_new < 1:
+                r_new = 1
+            jn = sp[gidx[i] - r_new]
+            logq_new = _logq_rank(r_new, m, rho, p_new)
+        p = pred[i]
+        if jn == p:
+            continue
+        if p < 0:
+            logq_old = lpn
+        else:
+            r_old = gidx[i] - gidx[p]
+            logq_old = _logq_rank(r_old, m, rho, p_new)
+        i2 = -1
+        if jn >= 0 and succ[jn] >= 0:                 # j' occupato: scambio di predecessori
+            if p < 0:
+                continue
+            i2 = succ[jn]
+            if p >= i2 or i2 - p > K:
+                continue
+        # intervallo di t toccato
+        lo = i + 1
+        if p >= 0 and p + 1 < lo:
+            lo = p + 1
+        if jn >= 0 and jn + 1 < lo:
+            lo = jn + 1
+        hi = i
+        if i2 > hi:
+            hi = i2
+        old_sum = 0.0
+        for t in range(lo, hi + 1):
+            old_sum += _term(t, pred, cnt, S, loglam, nu, lognu, NMAX)
+        old_chain = _chains_logf(i, p, jn, i2, pred, succ, logf, LMAX)
+
+        # applica
+        if i2 < 0:
+            if p >= 0:
+                _link(p, i, -1, cnt, S, lam)
+                succ[p] = -1
+            if jn >= 0:
+                _link(jn, i, 1, cnt, S, lam)
+                succ[jn] = i
+            pred[i] = jn
+        else:
+            _link(p, i, -1, cnt, S, lam)
+            _link(jn, i2, -1, cnt, S, lam)
+            _link(jn, i, 1, cnt, S, lam)
+            _link(p, i2, 1, cnt, S, lam)
+            pred[i] = jn
+            succ[jn] = i
+            pred[i2] = p
+            succ[p] = i2
+
+        new_sum = 0.0
+        for t in range(lo, hi + 1):
+            new_sum += _term(t, pred, cnt, S, loglam, nu, lognu, NMAX)
+        new_chain = _chains_logf(i, p, jn, i2, pred, succ, logf, LMAX)
+        dlp = (new_sum - old_sum) + (new_chain - old_chain)
+        logr = beta * dlp + logq_old - logq_new
+        if np.log(np.random.random()) < logr:
+            acc += 1
+            dsum += dlp
+        else:                                         # ripristina
+            if i2 < 0:
+                if jn >= 0:
+                    _link(jn, i, -1, cnt, S, lam)
+                    succ[jn] = -1
+                if p >= 0:
+                    _link(p, i, 1, cnt, S, lam)
+                    succ[p] = i
+                pred[i] = p
+            else:
+                _link(jn, i, -1, cnt, S, lam)
+                _link(p, i2, -1, cnt, S, lam)
+                _link(p, i, 1, cnt, S, lam)
+                _link(jn, i2, 1, cnt, S, lam)
+                pred[i] = p
+                succ[p] = i
+                pred[i2] = jn
+                succ[jn] = i2
+    return acc, dsum
+
+
+@njit(cache=True)
+def _stats(pred, succ, cnt, S, K, age_bin, nu, NMAX, LMAX, len_bin,
+           lam_num, lam_den, nu_num, nu_den, len_cnt):
+    """Statistiche sufficienti per l'aggiornamento MM dei parametri."""
+    T = len(pred)
+    for t in range(T):
+        c = cnt[t]
+        if c > NMAX:
+            c = NMAX
+        z = nu[c] + S[t]
+        if z < 1e-300:
+            z = 1e-300
+        nu_den[c] += 1.0 / z
+        if pred[t] < 0:
+            nu_num[c] += 1.0
+        else:
+            lam_num[age_bin[t - pred[t]]] += 1.0
+    for j in range(T):
+        i = succ[j]
+        if i < 0:
+            continue
+        for t in range(j + 1, i + 1):
+            c = cnt[t]
+            if c > NMAX:
+                c = NMAX
+            z = nu[c] + S[t]
+            if z < 1e-300:
+                z = 1e-300
+            lam_den[age_bin[t - j]] += 1.0 / z
+    for h in range(T):
+        if pred[h] < 0:
+            n = 1
+            y = h
+            while succ[y] >= 0:
+                y = succ[y]
+                n += 1
+            if n > LMAX:
+                n = LMAX
+            len_cnt[len_bin[n]] += 1.0
+
+
+@njit(cache=True)
+def _greedy_init(sign, K, q):
+    """Partizione iniziale: ogni trade si collega, con prob. q, al piu' vicino trade precedente
+    dello stesso segno ancora senza successore (entro K)."""
+    T = len(sign)
+    pred = np.full(T, -1, np.int64)
+    has_succ = np.zeros(T, np.bool_)
+    for t in range(1, T):
+        if np.random.random() < q:
+            for j in range(t - 1, max(t - K, 0) - 1, -1):
+                if sign[j] == sign[t] and not has_succ[j]:
+                    pred[t] = j
+                    has_succ[j] = True
+                    break
+    return pred
+
+
+@njit(cache=True)
+def _forward_init(sign, K, lam, nu, NMAX, haz, LMAX):
+    """Partizione iniziale campionata in avanti dal modello: il trade t sceglie un predecessore
+    tra le code vive dello stesso segno con peso lam(eta'), oppure apre un metaordine nuovo
+    (peso nu[n]/2, n = n. di code vive entro K); dopo ogni figlio il metaordine si conclude
+    con probabilita' haz[lunghezza]."""
+    T = len(sign)
+    pred = np.full(T, -1, np.int64)
+    succ = np.full(T, -1, np.int64)
+    clen = np.ones(T, np.int64)
+    alive = np.zeros(T, np.bool_)
+    w = np.empty(K + 1)
+    for t in range(T):
+        s = sign[t]
+        tot = 0.0
+        n_open = 0
+        lo = max(t - K, 0)
+        for j in range(t - 1, lo - 1, -1):
+            w[t - j] = 0.0
+            if alive[j] and succ[j] < 0:
+                n_open += 1
+                if sign[j] == s:
+                    w[t - j] = lam[t - j]
+                    tot += lam[t - j]
+        c = n_open if n_open < NMAX else NMAX
+        wn = 0.5 * nu[c]
+        u = np.random.random() * (tot + wn)
+        if u >= tot:
+            clen[t] = 1
+        else:
+            acc = 0.0
+            ch = -1
+            for j in range(t - 1, lo - 1, -1):
+                acc += w[t - j]
+                if w[t - j] > 0.0 and u < acc:
+                    ch = j
+                    break
+            if ch < 0:
+                clen[t] = 1
+            else:
+                pred[t] = ch
+                succ[ch] = t
+                clen[t] = clen[ch] + 1
+        k = clen[t] if clen[t] < LMAX else LMAX
+        alive[t] = np.random.random() >= haz[k]
+    return pred
+
+
+@njit(cache=True)
+def _chain_ids(pred):
+    T = len(pred)
+    cid = np.empty(T, np.int64)
+    nxt = 0
+    for t in range(T):
+        if pred[t] < 0:
+            cid[t] = nxt
+            nxt += 1
+        else:
+            cid[t] = cid[pred[t]]
+    return cid
+
+
+# ----------------------------------------------------------------------------
+# Parametri: tabelle a bin
+# ----------------------------------------------------------------------------
+def _make_bins(n_max, n_single, ratio):
+    """Bin per interi 1..n_max: singoli fino a n_single, poi geometrici. Ritorna (bin_of[0..n_max], nb, width)."""
+    edges = [1]
+    a = 1
+    while a <= n_max:
+        nxt = a + 1 if a < n_single else max(a + 1, int(round(a * ratio)))
+        edges.append(nxt)
+        a = nxt
+    bin_of = np.zeros(n_max + 1, dtype=np.int64)
+    width = []
+    for k in range(len(edges) - 1):
+        lo, hi = edges[k], min(edges[k + 1], n_max + 1)
+        bin_of[lo:hi] = k
+        width.append(hi - lo)
+    return bin_of, len(edges) - 1, np.array(width, dtype=float)
+
+
+class McmcParams:
+    """Parametri nonparametrici: lam(eta') a bin, nu[n], pmf f(L) a bin."""
+
+    def __init__(self, K=100, NMAX=12, LMAX=2000, pareto_exp=None):
+        self.K, self.NMAX, self.LMAX = int(K), int(NMAX), int(LMAX)
+        self.fix_f = pareto_exp is not None
+        self.age_bin, self.nb_lam, self.age_w = _make_bins(self.K, 8, 1.25)
+        self.len_bin, self.nb_len, self.len_w = _make_bins(self.LMAX, 12, 1.3)
+        self.lam_bin = np.ones(self.nb_lam)
+        self.nu = np.ones(self.NMAX + 1)
+        r = 0.4
+        cnt = np.array([sum((1 - r) ** (n - 1) * r for n in range(1, self.LMAX + 1)
+                            if self.len_bin[n] == b) for b in range(self.nb_len)])
+        cnt = np.maximum(cnt, 1e-12)
+        self.f_bin = cnt / self.len_w / cnt.sum()           # pmf per intero (normalizzata)
+        if pareto_exp is not None:                          # pmf Pareto: P(L >= n) = n^-alpha
+            n = np.arange(1, self.LMAX + 1, dtype=float)
+            pm = n ** -pareto_exp - (n + 1.0) ** -pareto_exp
+            pm[-1] += (self.LMAX + 1.0) ** -pareto_exp
+            fb = np.array([pm[self.len_bin[1:] == b].sum() for b in range(self.nb_len)])
+            self.f_bin = np.maximum(fb, 1e-300) / self.len_w / fb.sum()
+
+    def tables(self):
+        lam = np.ones(self.K + 1)
+        lam[1:] = self.lam_bin[self.age_bin[1:]]
+        logf = np.zeros(self.LMAX + 1)
+        logf[1:] = np.log(np.maximum(self.f_bin[self.len_bin[1:]], 1e-12))
+        return lam, np.log(lam), self.nu.copy(), np.log(self.nu), logf
+
+    def hazard(self):
+        """h(k) = f(k) / P(L >= k) dalla pmf corrente, k = 0..LMAX."""
+        f = np.zeros(self.LMAX + 1)
+        f[1:] = self.f_bin[self.len_bin[1:]]
+        surv = 1.0 - np.concatenate([[0.0], np.cumsum(f[1:])[:-1]])
+        h = np.zeros(self.LMAX + 1)
+        h[1:] = np.clip(f[1:] / np.maximum(surv, 1e-12), 0.0, 1.0)
+        h[self.LMAX] = 1.0
+        return h
+
+    @staticmethod
+    def _shrink(num, den, old, strength=0.5, reach=2):
+        """Stima MM regolarizzata: il rapporto num/den dei bin poco esposti (den piccolo) e' molto
+        rumoroso, quindi viene tirato verso la media locale (bin entro `reach`, pesati per den)."""
+        nb = len(num)
+        ok = den > 1e-9
+        raw = np.where(ok, num / np.maximum(den, 1e-300), old)
+        pr = strength * (np.median(den[ok]) if ok.any() else 1.0)
+        loc = np.empty(nb)
+        for b in range(nb):
+            lo, hi = max(b - reach, 0), min(b + reach + 1, nb)
+            w = den[lo:hi] * np.exp(-0.7 * np.abs(np.arange(lo, hi) - b))
+            loc[b] = (w * raw[lo:hi]).sum() / w.sum() if w.sum() > 0 else old[b]
+        return (num + pr * loc) / (den + pr)
+
+    def mstep(self, lam_num, lam_den, nu_num, nu_den, len_cnt, prior=0.2):
+        self.lam_bin = np.maximum(self._shrink(lam_num, lam_den, self.lam_bin, reach=2), 1e-9)
+        self.nu = np.maximum(self._shrink(nu_num, nu_den, self.nu, reach=1), 1e-9)
+        # scala libera (solo i rapporti contano): normalizza sulla media di lam pesata per l'esposizione
+        w = np.maximum(lam_den, 0.0)
+        sc = (w * self.lam_bin).sum() / w.sum() if w.sum() > 0 else self.lam_bin.mean()
+        self.lam_bin = self.lam_bin / sc
+        self.nu = self.nu / sc
+        if not self.fix_f:
+            c = len_cnt + 0.5
+            self.f_bin = c / c.sum() / self.len_w
+
+
+def run_mcmc(signs, day_codes, K=100, n_em=20, n_sweeps=4, n_stat=2, final_sweeps=6,
+             p_new=0.15, rho=0.6, anneal=1.0, pareto_exp=None, params=None, seed=None, verbose=True, check=False, init_q=0.5, true_pred=None):
+    """EM stocastico + campionamento finale della partizione.
+    signs: segni (+-1) in ordine temporale; day_codes: indice del giorno di ogni trade.
+    Ritorna (chain_id per trade [globale], params)."""
+    signs = np.asarray(signs)
+    n = len(signs)
+    sgn = np.where(signs > 0, 1, -1).astype(np.int8)
+    d_starts = np.flatnonzero(np.r_[True, day_codes[1:] != day_codes[:-1]])
+    d_ends = np.r_[d_starts[1:], n]
+    if seed is not None:
+        _seed(int(seed))
+    par = params if params is not None else McmcParams(K=K, pareto_exp=pareto_exp)
+    K = par.K
+    days = []
+    lam0, _, nu0, _, _ = par.tables()
+    haz0 = par.hazard()
+    for a, b in zip(d_starts, d_ends):
+        sg = sgn[a:b].copy()
+        days.append((a, b, sg, _forward_init(sg, K, lam0, nu0, par.NMAX, haz0, par.LMAX)))
+    idx = [_sign_index(sg, K) for (_, _, sg, _) in days]
+
+    def rebuild(tabs):
+        lam, loglam, nu, lognu, logf = tabs
+        return [_init_state(pred, K, lam) for (_, _, _, pred) in days]
+
+    hist = []
+    for it in range(n_em):
+        lam, loglam, nu, lognu, logf = tabs = par.tables()
+        states = rebuild(tabs)
+        lam_num = np.zeros(par.nb_lam); lam_den = np.zeros(par.nb_lam)
+        nu_num = np.zeros(par.NMAX + 1); nu_den = np.zeros(par.NMAX + 1)
+        len_cnt = np.zeros(par.nb_len)
+        accs = []
+        for di, ((a, b, sg, pred), (succ, cnt, S)) in enumerate(zip(days, states)):
+            T = b - a
+            sp, gidx, mwin = idx[di]
+            for sw in range(n_sweeps):
+                # annealing: temperatura alta nelle prime iterazioni EM, poi 1
+                beta = 1.0 / (1.0 + (anneal - 1.0) * max(0.0, 1.0 - it / max(n_em / 2.0, 1.0)))
+                ac, _ = _sweep(sg, pred, succ, cnt, S, K, lam, loglam, nu, lognu, par.NMAX, logf, par.LMAX, p_new, T,
+                               sp, gidx, mwin, rho, beta)
+                accs.append(ac / max(T, 1))
+                if sw >= n_sweeps - n_stat:
+                    _stats(pred, succ, cnt, S, K, par.age_bin, nu, par.NMAX, par.LMAX, par.len_bin,
+                           lam_num, lam_den, nu_num, nu_den, len_cnt)
+        if true_pred is not None and verbose and (it % 5 == 0 or it == n_em - 1):
+            tp = np.asarray(true_pred, dtype=np.int64)
+            ts, tc, tS = _init_state(tp, K, lam)
+            ll_true = _total_loglik(tp, ts, tc, tS, loglam, nu, lognu, par.NMAX, logf, par.LMAX)
+            (a, b, sg, pred), (succ, cnt, S) = days[0], states[0]
+            ll_cur = _total_loglik(pred, succ, cnt, S, loglam, nu, lognu, par.NMAX, logf, par.LMAX)
+            print(f"[mcmc-diag] iter {it + 1}: logP(partizione vera) = {ll_true:.1f}, logP(campione) = {ll_cur:.1f}")
+        par.mstep(lam_num, lam_den, nu_num, nu_den, len_cnt)
+        if it >= n_em - max(n_em // 2, 1):
+            hist.append((par.lam_bin.copy(), par.nu.copy()))
+        if verbose and (it % 5 == 0 or it == n_em - 1):
+            nchains = len_cnt.sum() / n_stat
+            print(f"[mcmc] EM {it + 1}/{n_em}: accettazione {np.mean(accs):.3f}, catene {int(nchains)}, "
+                  f"L medio {n / max(nchains, 1):.2f}")
+        # warm start dello stato tra le iterazioni
+        days = [(a, b, sg, pred) for (a, b, sg, pred) in days]
+
+    if hist:                                                # media sulle ultime iterazioni EM
+        par.lam_bin = np.mean([h[0] for h in hist], axis=0)
+        par.nu = np.mean([h[1] for h in hist], axis=0)
+    lam, loglam, nu, lognu, logf = tabs = par.tables()
+    states = rebuild(tabs)
+    cid_all = np.empty(n, np.int64)
+    base = 0
+    for di, ((a, b, sg, pred), (succ, cnt, S)) in enumerate(zip(days, states)):
+        T = b - a
+        tot0 = _total_loglik(pred, succ, cnt, S, loglam, nu, lognu, par.NMAX, logf, par.LMAX) if check else 0.0
+        dsum = 0.0
+        sp, gidx, mwin = idx[di]
+        for sw in range(final_sweeps):
+            ac, d = _sweep(sg, pred, succ, cnt, S, K, lam, loglam, nu, lognu, par.NMAX, logf, par.LMAX, p_new, T,
+                           sp, gidx, mwin, rho, 1.0)
+            dsum += d
+        if check:
+            tot1 = _total_loglik(pred, succ, cnt, S, loglam, nu, lognu, par.NMAX, logf, par.LMAX)
+            print(f"[mcmc-check] log P: {tot0:.3f} + {dsum:.3f} = {tot0 + dsum:.3f} vs ricalcolato {tot1:.3f}")
+        cid = _chain_ids(pred)
+        cid_all[a:b] = cid + base
+        base += int(cid.max()) + 1 if T else 0
+    return cid_all, par
+
+
+_MCMC_CACHE = {}
+
+
+def _assign_mcmc(signs, day_codes, pareto_exp, K, n_em, n_sweeps, n_stat, n_final, rho, relearn):
+    """Partizione per linking MCMC. I parametri (lam, nu) appresi alla prima chiamata sono
+    riutilizzati nelle successive (stessi K e pareto_exp) se relearn=False.
+    Ritorna l'id di catena (metaordine) di ogni trade."""
+    key = (int(K), float(pareto_exp))
+    par = _MCMC_CACHE.get(key)
+    learn = relearn or par is None
+    if par is None:
+        par = McmcParams(K=K, pareto_exp=pareto_exp)
+    cid, par = run_mcmc(signs, day_codes, K=K, n_em=(n_em if learn else 0), n_sweeps=n_sweeps,
+                        n_stat=n_stat, final_sweeps=n_final, rho=rho, pareto_exp=pareto_exp, params=par)
+    _MCMC_CACHE[key] = par
+    if learn:
+        lam_show = np.round(par.lam_bin[:10], 3)
+        print(f"[mcmc] parametri appresi: lam(eta'=1..) = {lam_show}, nu[n_aperti] = {np.round(par.nu, 3)}")
+    return cid
+
+
+def learn_mcmc_params(paths, data_dir, pareto_exp, K=100, n_em=30, n_sweeps=40, n_stat=10, rho=0.6):
+    """Apprende (lam, nu) UNA volta su piu' giorni insieme e li salva nella cache: le chiamate
+    successive a generate(mode='mcmc', mcmc_relearn=False) li riutilizzano senza riapprendere.
+    paths: lista di file (relativi a data_dir), tipicamente giorni distribuiti nel periodo."""
+    sg_all, dc_all = [], []
+    for k, pth in enumerate(paths):
+        tr = pd.read_csv(f"{data_dir}\\{pth}", header=None)
+        order = np.argsort(np.array(tr[0]), kind='stable')
+        sg = np.sign(np.array(tr[3])[order])
+        sg_all.append(sg)
+        dc_all.append(np.full(len(sg), k, dtype=np.int64))
+    sg_all, dc_all = np.concatenate(sg_all), np.concatenate(dc_all)
+    print(f"[mcmc] apprendimento su {len(paths)} file, {len(sg_all)} trade")
+    key = (int(K), float(pareto_exp))
+    par = McmcParams(K=K, pareto_exp=float(pareto_exp))
+    _, par = run_mcmc(sg_all, dc_all, K=K, n_em=n_em, n_sweeps=n_sweeps, n_stat=n_stat,
+                      final_sweeps=0, rho=rho, pareto_exp=float(pareto_exp), params=par)
+    _MCMC_CACHE[key] = par
+    print(f"[mcmc] parametri appresi: lam(eta'=1..) = {np.round(par.lam_bin, 3)}, "
+          f"nu[n_aperti] = {np.round(par.nu, 3)}")
+    return par
+
+
 # ----------------------------------------------------------------------------
 # GENERATE
 # ----------------------------------------------------------------------------
 def generate(path, nb_traders, pareto_exp, start_id=0, data_dir='database\\data',
              mode='hmm_pareto', drop_prob=0.0, pre_window=1000, n_types=4,
-             eps=0.0, lam=0.3, block_size=None, max_pool=30):
+             eps=0.0, lam=0.3, block_size=None, max_pool=30,
+             mcmc_K=100, mcmc_em=30, mcmc_sweeps=40, mcmc_stat=10, mcmc_final=200,
+             mcmc_rho=0.6, mcmc_relearn=False):
     """
     Genera i metaordini da un file di trade e calcola impatto/volume parziali e totali.
 
@@ -433,7 +1060,13 @@ def generate(path, nb_traders, pareto_exp, start_id=0, data_dir='database\\data'
     pareto_exp : float    esponente della Pareto della lunghezza (n. di figli) dei metaordini
     start_id : int        offset per gli id dei metaordini
     data_dir : str        cartella dei dati
-    mode : 'hmm' | 'hmm_pareto' | 'hmm_lambda' | 'truth'   (vedi docstring del modulo)
+    mode : 'hmm' | 'hmm_pareto' | 'hmm_lambda' | 'mcmc' | 'truth'   (vedi docstring del modulo)
+    mcmc_K : int          (mcmc) distanza massima, in trade, tra due figli consecutivi
+    mcmc_em, mcmc_sweeps, mcmc_stat : (mcmc) iterazioni EM, sweep per iterazione e sweep finali usati
+                          per le statistiche; l'apprendimento avviene alla prima chiamata
+    mcmc_final : int      (mcmc) sweep finali di campionamento della partizione
+    mcmc_rho : float      (mcmc) parametro della proposta geometrica sul rango dei candidati
+    mcmc_relearn : bool   (mcmc) se True riapprende i parametri a ogni chiamata (di default li riusa)
     drop_prob : float in [0, 1]
         probabilita' di scartare un metaordine con MetaImpact < 0 (0 = nessuno scarto)
     pre_window : int      n. di trade di mercato PRIMA del primo figlio per PreImbalance
@@ -448,8 +1081,8 @@ def generate(path, nb_traders, pareto_exp, start_id=0, data_dir='database\\data'
     metaorders_agg : pd.DataFrame   statistiche aggregate per metaordine
     sorted_trades : pd.DataFrame    trade con le feature calcolate
     """
-    if mode not in ('hmm', 'hmm_pareto', 'hmm_lambda', 'truth'):
-        raise ValueError("mode deve essere 'hmm', 'hmm_pareto', 'hmm_lambda' o 'truth'")
+    if mode not in ('hmm', 'hmm_pareto', 'hmm_lambda', 'mcmc', 'truth'):
+        raise ValueError("mode deve essere 'hmm', 'hmm_pareto', 'hmm_lambda', 'mcmc' o 'truth'")
 
     trades = pd.read_csv(f"{data_dir}\\{path}", header=None)
     t = np.array(trades[0])
@@ -519,10 +1152,16 @@ def generate(path, nb_traders, pareto_exp, start_id=0, data_dir='database\\data'
         trades['_mid'] = raw
         drop_cols = ['_mid', 'truth_id']
     else:
-        tr_idx, mid_raw, noise = _assign_hmm(
-            trades['sign'].to_numpy(), dcodes, mode, float(pareto_exp), n_types,
-            _as_list(nb_traders), _as_list(eps), _as_list(lam), block_size, max_pool)
-        if mode == 'hmm_lambda':
+        if mode == 'mcmc':
+            mid_raw = _assign_mcmc(trades['sign'].to_numpy(), dcodes, float(pareto_exp), mcmc_K, mcmc_em,
+                                   mcmc_sweeps, mcmc_stat, mcmc_final, mcmc_rho, mcmc_relearn)
+            tr_idx = np.zeros(len(mid_raw), dtype=np.int64)
+            noise = np.zeros(len(mid_raw), dtype=bool)
+        else:
+            tr_idx, mid_raw, noise = _assign_hmm(
+                trades['sign'].to_numpy(), dcodes, mode, float(pareto_exp), n_types,
+                _as_list(nb_traders), _as_list(eps), _as_list(lam), block_size, max_pool)
+        if mode in ('hmm_lambda', 'mcmc'):
             labels = 'Meta ' + pd.Series(mid_raw).astype(str)
         else:
             labels = 'Trader ' + pd.Series(tr_idx + 1).astype(str)

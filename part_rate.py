@@ -551,8 +551,8 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
             )
 
     if all_x_min and all_x_max:
-        global_x_min = min(all_x_min)
-        global_x_max = max(all_x_max)
+        global_x_min = 1e-6 #min(all_x_min)
+        global_x_max = 1e-2 #max(all_x_max)
         x_ref = np.logspace(np.log10(global_x_min), np.log10(global_x_max), 100)
         y_ref = x_ref**0.5
         ax1.plot(x_ref, y_ref, linestyle='-', color='black', linewidth=1.2, label=r'$\sqrt{Q}$')
@@ -575,16 +575,20 @@ def plot_impact_volume_by_deciles(dir_path, path, n_deciles=10, min_nb_child=1,
 
 if __name__ == '__main__':
     model = ''
-    model = 'lmf_emp_tim_0.1'
+    #model = 'lmf_emp_tim_param_0.3'
+    #model = 'tim_param_0.3'
+    #model = 'lmf_emp_tim_0.0'
+    #model = 'tim_0.0'
+    #model = 'nn'
 
     DIR = os.path.join('database', f'meta{"" if model == "" else f"_{model}"}')
 
-    nb_traders = 4
+    nb_traders = 20
     kind = 'power'
     exp = '2.0'
     pareto_exp = 1.5
 
-    algorithm = 'lmf'
+    algorithm = 'maitrier'
 
     if algorithm == 'maitrier':
         if kind == 'uniform':
@@ -594,11 +598,11 @@ if __name__ == '__main__':
     elif algorithm == 'lmf':
         conf = 'lmf'
 
-    #conf = 's_2_hmm_1.2'
+    conf = 's_mcmc_K300_1.5_L5'
 
     print(conf, model)
 
-    THRESHOLD = 0.01
+    THRESHOLD = 0.1
 
     path = 'meta_' + conf
     PATH = f'meta_{conf}.csv'
